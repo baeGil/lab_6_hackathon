@@ -1,4 +1,7 @@
+import { ensureRootEnvLoaded } from "../../shared/src/env";
 import crypto from "node:crypto";
+
+ensureRootEnvLoaded();
 
 interface EncryptedValue {
   iv: string;

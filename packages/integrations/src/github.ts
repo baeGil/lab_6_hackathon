@@ -1,6 +1,9 @@
 import type { AnalysisResult, DeliveryRecord } from "../../shared/src/index";
 import type { PullRequestFile, PullRequestSnapshot, WebhookEvent } from "../../shared/src/index";
+import { ensureRootEnvLoaded } from "../../shared/src/env";
 import crypto from "node:crypto";
+
+ensureRootEnvLoaded();
 
 export interface GitHubRuntimeCredentials {
   githubAppId?: string;

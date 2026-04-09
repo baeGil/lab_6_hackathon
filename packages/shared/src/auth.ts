@@ -1,4 +1,7 @@
+import { ensureRootEnvLoaded } from "./env";
 import crypto from "node:crypto";
+
+ensureRootEnvLoaded();
 
 export interface UserSession {
   githubId: string;

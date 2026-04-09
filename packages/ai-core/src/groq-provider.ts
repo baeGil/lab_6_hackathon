@@ -8,6 +8,7 @@ import type {
   SecurityFinding,
   TestFinding
 } from "../../shared/src/index";
+import { ensureRootEnvLoaded } from "../../shared/src/env";
 import { z } from "zod";
 import {
   canonicalBriefSchema,
@@ -31,6 +32,8 @@ import {
   testingMessages
 } from "./prompts";
 import type { AiProvider, AnalysisContext } from "./provider";
+
+ensureRootEnvLoaded();
 
 interface GroqResponse {
   choices?: Array<{

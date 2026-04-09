@@ -8,7 +8,10 @@ import type {
   RepoMemory,
   WebhookEvent
 } from "../../shared/src/index";
+import { ensureRootEnvLoaded } from "../../shared/src/env";
 import { decryptSecret, encryptSecret } from "./secrets";
+
+ensureRootEnvLoaded();
 
 interface StoredCredentials {
   slackWebhookUrl?: string;

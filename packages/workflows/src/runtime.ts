@@ -1,10 +1,13 @@
 import type { MemoryStore } from "../../db/src/store";
+import { ensureRootEnvLoaded } from "../../shared/src/env";
 import { GroqAiProvider } from "../../ai-core/src/groq-provider";
 import { HeuristicAiProvider } from "../../ai-core/src/heuristic-provider";
 import type { AiProvider } from "../../ai-core/src/provider";
 import { FakeDiscordAdapter, RealDiscordAdapter, type DiscordAdapter } from "../../integrations/src/discord";
 import { FakeGitHubAdapter, RealGitHubAdapter, type GitHubAdapter } from "../../integrations/src/github";
 import { FakeSlackAdapter, RealSlackAdapter, type SlackAdapter } from "../../integrations/src/slack";
+
+ensureRootEnvLoaded();
 
 export function createProvider(): AiProvider {
   const mode = process.env.AI_PROVIDER_MODE;
