@@ -11,6 +11,13 @@ export interface GitHubRuntimeCredentials {
   githubApiUrl?: string;
 }
 
+export interface GitHubTrackedRepositoryCandidate {
+  repoId: string;
+  repoName: string;
+  installationId: number;
+  ownerLogin: string;
+}
+
 export interface GitHubAdapter {
   upsertCanonicalComment(result: AnalysisResult): Promise<DeliveryRecord>;
   upsertCheckRun(result: AnalysisResult): Promise<DeliveryRecord>;
@@ -72,6 +79,49 @@ async function githubRequest<T>(
 
 async function getInstallationToken(installationId: number) {
   return getInstallationTokenWithCredentials(installationId, {});
+}
+
+export async function fetchTrackedRepositoriesForUser(
+  accessToken: string,
+  apiUrl = process.env.GITHUB_API_URL ?? "https://api.github.com"
+) {
+  const installations = await githubRequest<{
+    installations: Array<{
+      id: number;
+      account?: { login?: string };
+    }>;
+  }>(
+    "/user/installations?per_page=100",
+    { method: "GET" },
+    accessToken,
+    apiUrl
+  );
+
+  const repositories = await Promise.all(
+    installations.installations.map(async (installation) => {
+      const repos = await githubRequest<{
+        repositories: Array<{
+          id: number;
+          full_name: string;
+          owner?: { login?: string };
+        }>;
+      }>(
+        `/user/installations/${installation.id}/repositories?per_page=100`,
+        { method: "GET" },
+        accessToken,
+        apiUrl
+      );
+
+      return repos.repositories.map((repository) => ({
+        repoId: String(repository.id),
+        repoName: repository.full_name,
+        installationId: installation.id,
+        ownerLogin: repository.owner?.login ?? installation.account?.login ?? repository.full_name.split("/")[0] ?? "unknown"
+      }));
+    })
+  );
+
+  return repositories.flat().sort((left, right) => left.repoName.localeCompare(right.repoName));
 }
 
 async function getInstallationTokenWithCredentials(

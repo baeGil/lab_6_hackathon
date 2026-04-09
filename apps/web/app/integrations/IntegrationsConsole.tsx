@@ -1,24 +1,16 @@
 "use client";
 
 import type { CSSProperties, FormEvent } from "react";
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
+import { useSearchParams } from "next/navigation";
+import type { IntegrationCredentialsStatus, RepoIntegration, TrackedRepository } from "../../../../packages/shared/src/index";
 
-type Status = {
-  githubAppConfigured: boolean;
-  githubOAuthConfigured: boolean;
-  githubWebhookSecretConfigured: boolean;
-  slackConfigured: boolean;
-  discordConfigured: boolean;
-  groqConfigured: boolean;
-  githubApiUrl: string;
-  groqModelId: string;
-  aiProviderMode: "heuristic" | "groq";
+type RepositoriesResponse = {
+  repositories: TrackedRepository[];
+  status: IntegrationCredentialsStatus;
 };
 
-const initialForm = {
-  slackWebhookUrl: "",
-  discordWebhookUrl: ""
-};
+type DraftMap = Record<string, { slackWebhookUrl: string; discordWebhookUrl: string }>;
 
 function StatusPill({ ok, label }: { ok: boolean; label: string }) {
   return (
@@ -41,107 +33,184 @@ function StatusPill({ ok, label }: { ok: boolean; label: string }) {
 }
 
 export function IntegrationsConsole() {
-  const [form, setForm] = useState(initialForm);
-  const [status, setStatus] = useState<Status | null>(null);
+  const searchParams = useSearchParams();
+  const highlightedRepoId = searchParams.get("repoId");
+  const [repositories, setRepositories] = useState<TrackedRepository[]>([]);
+  const [status, setStatus] = useState<IntegrationCredentialsStatus | null>(null);
+  const [drafts, setDrafts] = useState<DraftMap>({});
   const [message, setMessage] = useState<string>("");
   const [isPending, startTransition] = useTransition();
 
+  const authMessage = useMemo(() => {
+    const auth = searchParams.get("auth");
+    if (auth === "ok") return "GitHub account connected. Sync your repositories, then configure channels per repo.";
+    if (auth === "failed") return "GitHub sign-in failed. Try again.";
+    if (auth === "missing-client") return "GitHub OAuth client credentials are missing on the server.";
+    if (auth === "token-error") return "GitHub refused the OAuth code exchange.";
+    if (auth === "no-token") return "GitHub did not return an access token.";
+    if (auth === "user-error") return "GitHub login succeeded, but the user profile lookup failed.";
+    return "";
+  }, [searchParams]);
+
+  async function load() {
+    const [statusResponse, reposResponse] = await Promise.all([
+      fetch("/api/settings/integrations"),
+      fetch("/api/repositories")
+    ]);
+
+    if (statusResponse.ok) {
+      const statusData = (await statusResponse.json()) as { status: IntegrationCredentialsStatus };
+      setStatus(statusData.status);
+    }
+
+    if (!reposResponse.ok) {
+      if (reposResponse.status === 401) {
+        setMessage("Sign in with GitHub to configure per-repository channels.");
+      }
+      return;
+    }
+
+    const reposData = (await reposResponse.json()) as RepositoriesResponse;
+    setRepositories(reposData.repositories);
+    setStatus(reposData.status);
+
+    const nextDrafts: DraftMap = {};
+    await Promise.all(
+      reposData.repositories.map(async (repository) => {
+        const response = await fetch(`/api/repositories/${repository.repoId}/integrations`);
+        if (!response.ok) return;
+        const data = (await response.json()) as { integration: RepoIntegration | null };
+        nextDrafts[repository.repoId] = {
+          slackWebhookUrl: data.integration?.slackWebhookUrl ?? "",
+          discordWebhookUrl: data.integration?.discordWebhookUrl ?? ""
+        };
+      })
+    );
+    setDrafts(nextDrafts);
+  }
+
   useEffect(() => {
     startTransition(async () => {
-      const response = await fetch("/api/settings/integrations");
-      const data = (await response.json()) as { status: Status };
-      setStatus(data.status);
+      await load();
     });
   }, []);
 
-  async function save(event: FormEvent<HTMLFormElement>) {
+  async function save(event: FormEvent<HTMLFormElement>, repoId: string) {
     event.preventDefault();
     setMessage("");
-    const payload = Object.fromEntries(
-      Object.entries(form).filter(([, value]) => String(value).trim() !== "")
-    );
-
-    const response = await fetch("/api/settings/integrations", {
+    const draft = drafts[repoId] ?? { slackWebhookUrl: "", discordWebhookUrl: "" };
+    const response = await fetch(`/api/repositories/${repoId}/integrations`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
+      body: JSON.stringify(draft)
     });
-    const data = (await response.json()) as { ok: boolean; status: Status };
-    setStatus(data.status);
-    setMessage(data.ok ? "Credentials saved to the local secure runtime store." : "Save failed.");
-    setForm((current) => ({
-      ...current,
-      slackWebhookUrl: "",
-      discordWebhookUrl: ""
-    }));
+    const data = (await response.json()) as { ok?: boolean; error?: string };
+    if (!response.ok) {
+      setMessage(data.error ?? "Failed to save repository integration.");
+      return;
+    }
+    setMessage("Repository integrations saved.");
+    await load();
   }
 
   return (
     <div style={{ display: "grid", gap: 24 }}>
       <section style={heroStyle}>
-        <div style={heroEyebrowStyle}>Workspace Setup</div>
-        <h2 style={{ margin: "10px 0", fontSize: 34 }}>Connect the live services your users need</h2>
+        <div style={heroEyebrowStyle}>Team Channels</div>
+        <h2 style={{ margin: "10px 0", fontSize: 34 }}>Route each tracked repository to the Slack or Discord channel it deserves</h2>
         <p style={{ margin: 0, maxWidth: 760, lineHeight: 1.6 }}>
-          This console writes credentials into the running app so you can test real GitHub pull requests, real Groq
-          inference, and real Slack or Discord delivery without editing files on every run.
+          Team leads configure channel webhooks once per repo. Developers keep coding; pull requests flow back into the
+          matching team channel automatically.
         </p>
       </section>
 
+      {(authMessage || message) && (
+        <section style={noticeStyle}>
+          <div>{authMessage || message}</div>
+        </section>
+      )}
+
       <section style={panelStyle}>
-        <h3 style={{ marginTop: 0 }}>Runtime Status</h3>
+        <h3 style={{ marginTop: 0 }}>System Managed Credentials</h3>
+        <p style={{ marginTop: 0, color: "#5f5449", lineHeight: 1.6 }}>
+          GitHub OAuth, GitHub App, webhook verification, and Groq stay on the server. Workspace users only configure
+          per-repository delivery webhooks here.
+        </p>
         <div style={statusGridStyle}>
           <StatusPill ok={Boolean(status?.githubAppConfigured)} label="GitHub App" />
           <StatusPill ok={Boolean(status?.githubOAuthConfigured)} label="GitHub OAuth" />
           <StatusPill ok={Boolean(status?.githubWebhookSecretConfigured)} label="Webhook Secret" />
           <StatusPill ok={Boolean(status?.groqConfigured)} label="Groq" />
-          <StatusPill ok={Boolean(status?.slackConfigured)} label="Slack" />
-          <StatusPill ok={Boolean(status?.discordConfigured)} label="Discord" />
         </div>
       </section>
 
-      <form onSubmit={save} style={formGridStyle}>
-        <section style={panelStyle}>
-          <h3 style={{ marginTop: 0 }}>System Managed Credentials</h3>
-          <p style={{ marginTop: 0, color: "#5f5449", lineHeight: 1.6 }}>
-            GitHub OAuth, GitHub App, webhook verification, and Groq are system-level credentials. They must live in
-            <code> .env </code> and are not editable by workspace users here.
+      <section style={panelStyle}>
+        <div style={{ display: "grid", gap: 8 }}>
+          <h3 style={{ margin: 0 }}>Per-Repository Integrations</h3>
+          <p style={{ margin: 0, color: "#5f5449", lineHeight: 1.6 }}>
+            A repository can use Slack, Discord, or both. Reusing the same webhook URL across multiple repos is fully
+            supported for v1.
           </p>
-          <div style={{ display: "grid", gap: 10, color: "#3f382f" }}>
-            <div>GitHub OAuth: {status?.githubOAuthConfigured ? "configured" : "missing in .env"}</div>
-            <div>GitHub App: {status?.githubAppConfigured ? "configured" : "missing in .env"}</div>
-            <div>Webhook secret: {status?.githubWebhookSecretConfigured ? "configured" : "optional / missing"}</div>
-            <div>Groq provider: {status?.groqConfigured ? "configured" : "missing in .env"}</div>
-            <div>GitHub API URL: {status?.githubApiUrl ?? "https://api.github.com"}</div>
-            <div>AI mode: {status?.aiProviderMode ?? "heuristic"}</div>
-            <div>Groq model: {status?.groqModelId ?? "llama-3.3-70b-versatile"}</div>
+        </div>
+
+        {repositories.length === 0 ? (
+          <div style={emptyStyle}>
+            No repositories are available yet. Install the GitHub App, then go to <a href="/repositories">Repositories</a> and sync first.
           </div>
-        </section>
-
-        <section style={panelStyle}>
-          <h3 style={{ marginTop: 0 }}>Workspace Delivery Credentials</h3>
-          <p style={{ marginTop: 0, color: "#5f5449", lineHeight: 1.6 }}>
-            These are workspace-level user credentials. They belong in the UI, not in <code>.env</code>.
-          </p>
-          <Field label="Slack Incoming Webhook URL" value={form.slackWebhookUrl} onChange={(value) => setForm({ ...form, slackWebhookUrl: value })} />
-          <Field
-            label="Discord Webhook URL"
-            value={form.discordWebhookUrl}
-            onChange={(value) => setForm({ ...form, discordWebhookUrl: value })}
-          />
-        </section>
-
-        <section style={panelStyle}>
-          <h3 style={{ marginTop: 0 }}>Actions</h3>
-          <p style={{ marginTop: 0, color: "#5f5449", lineHeight: 1.6 }}>
-            Workspace secrets are encrypted in the local app runtime with <code>APP_MASTER_KEY</code>. In this repo they
-            are not yet persisted to Postgres, so restarting the app clears them.
-          </p>
-          <button type="submit" disabled={isPending} style={buttonStyle}>
-            {isPending ? "Saving..." : "Save Workspace Credentials"}
-          </button>
-          {message ? <p style={{ marginBottom: 0 }}>{message}</p> : null}
-        </section>
-      </form>
+        ) : (
+          <div style={repoListStyle}>
+            {repositories.map((repository) => {
+              const draft = drafts[repository.repoId] ?? { slackWebhookUrl: "", discordWebhookUrl: "" };
+              const highlighted = repository.repoId === highlightedRepoId;
+              return (
+                <form
+                  key={`${repository.ownerUserId}-${repository.repoId}`}
+                  onSubmit={(event) => save(event, repository.repoId)}
+                  style={{
+                    ...repoPanelStyle,
+                    borderColor: highlighted ? "rgba(13,91,114,0.35)" : "rgba(29,27,22,0.08)",
+                    boxShadow: highlighted ? "0 0 0 3px rgba(13,91,114,0.08)" : "none"
+                  }}
+                >
+                  <div style={{ display: "grid", gap: 6 }}>
+                    <div style={repoTitleStyle}>{repository.repoName}</div>
+                    <div style={{ color: "#5f5449" }}>
+                      Installation #{repository.installationId} · owner @{repository.ownerLogin}
+                    </div>
+                  </div>
+                  <div style={badgeRowStyle}>
+                    <StatusPill ok={repository.slackConfigured} label="Slack" />
+                    <StatusPill ok={repository.discordConfigured} label="Discord" />
+                  </div>
+                  <Field
+                    label="Slack Incoming Webhook URL"
+                    value={draft.slackWebhookUrl}
+                    onChange={(value) =>
+                      setDrafts((current) => ({
+                        ...current,
+                        [repository.repoId]: { ...draft, slackWebhookUrl: value }
+                      }))
+                    }
+                  />
+                  <Field
+                    label="Discord Webhook URL"
+                    value={draft.discordWebhookUrl}
+                    onChange={(value) =>
+                      setDrafts((current) => ({
+                        ...current,
+                        [repository.repoId]: { ...draft, discordWebhookUrl: value }
+                      }))
+                    }
+                  />
+                  <button type="submit" disabled={isPending} style={buttonStyle}>
+                    {isPending ? "Saving..." : "Save Repo Integration"}
+                  </button>
+                </form>
+              );
+            })}
+          </div>
+        )}
+      </section>
     </div>
   );
 }
@@ -184,13 +253,16 @@ const panelStyle: CSSProperties = {
   borderRadius: 24,
   background: "rgba(255,255,255,0.74)",
   border: "1px solid rgba(29,27,22,0.08)",
-  padding: 24
+  padding: 24,
+  display: "grid",
+  gap: 18
 };
 
-const formGridStyle: CSSProperties = {
-  display: "grid",
-  gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))",
-  gap: 18
+const noticeStyle: CSSProperties = {
+  borderRadius: 18,
+  padding: "14px 18px",
+  background: "rgba(255,255,255,0.82)",
+  border: "1px solid rgba(29,27,22,0.08)"
 };
 
 const statusGridStyle: CSSProperties = {
@@ -199,10 +271,28 @@ const statusGridStyle: CSSProperties = {
   gap: 12
 };
 
+const repoListStyle: CSSProperties = {
+  display: "grid",
+  gap: 18
+};
+
+const repoPanelStyle: CSSProperties = {
+  borderRadius: 22,
+  background: "rgba(247,243,235,0.95)",
+  border: "1px solid rgba(29,27,22,0.08)",
+  padding: 20,
+  display: "grid",
+  gap: 14
+};
+
+const repoTitleStyle: CSSProperties = {
+  fontSize: 24,
+  fontWeight: 700
+};
+
 const labelStyle: CSSProperties = {
   display: "grid",
-  gap: 8,
-  marginBottom: 16
+  gap: 8
 };
 
 const inputStyle: CSSProperties = {
@@ -224,4 +314,17 @@ const buttonStyle: CSSProperties = {
   color: "white",
   background: "#0d5b72",
   cursor: "pointer"
+};
+
+const emptyStyle: CSSProperties = {
+  padding: 18,
+  borderRadius: 18,
+  background: "rgba(255,255,255,0.82)",
+  color: "#5f5449"
+};
+
+const badgeRowStyle: CSSProperties = {
+  display: "flex",
+  gap: 8,
+  flexWrap: "wrap"
 };

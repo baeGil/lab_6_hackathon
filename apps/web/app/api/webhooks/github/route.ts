@@ -29,12 +29,23 @@ export async function POST(request: Request) {
     event = await buildWebhookEventFromGitHubPayload(payload, action, deliveryId);
   }
 
+  const deliveryTargets = store.getDeliveryTargetsForRepo(event.snapshot.repoId);
+  if (!isInternalPayload && !deliveryTargets.tracked) {
+    return NextResponse.json(
+      {
+        skipped: true,
+        reason: "Repository has not been onboarded by any signed-in user yet."
+      },
+      { status: 202 }
+    );
+  }
+
   const result = await handleWebhookEvent(event, {
     store,
     provider: createProvider(),
     github: createGitHubAdapter(),
-    slack: createSlackAdapter(undefined, store),
-    discord: createDiscordAdapter(undefined, store)
+    slack: createSlackAdapter(deliveryTargets.slackWebhookUrls),
+    discord: createDiscordAdapter(deliveryTargets.discordWebhookUrls)
   });
   return NextResponse.json(result);
 }

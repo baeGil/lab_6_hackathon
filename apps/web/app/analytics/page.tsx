@@ -1,7 +1,11 @@
+import { cookies } from "next/headers";
 import { getStore } from "../../../../packages/db/src/store";
+import { getSessionCookieName, verifySession } from "../../../../packages/shared/src/auth";
 
-export default function AnalyticsPage() {
-  const analytics = getStore().getAnalytics();
+export default async function AnalyticsPage() {
+  const cookieStore = await cookies();
+  const session = verifySession(cookieStore.get(getSessionCookieName())?.value);
+  const analytics = session ? getStore().getAnalyticsForUser(session.userId) : getStore().getAnalytics();
   return (
     <div style={{ display: "grid", gap: 20 }}>
       <div>

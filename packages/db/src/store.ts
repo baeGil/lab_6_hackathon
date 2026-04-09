@@ -1,11 +1,15 @@
 import type {
   AnalysisResult,
   AnalyticsSnapshot,
+  AuthenticatedUser,
   DeliveryRecord,
-  IntegrationCredentialsInput,
+  DeliveryTargets,
   IntegrationCredentialsStatus,
   RepoConfig,
+  RepoIntegration,
+  RepoIntegrationInput,
   RepoMemory,
+  TrackedRepository,
   WebhookEvent
 } from "../../shared/src/index";
 import { ensureRootEnvLoaded } from "../../shared/src/env";
@@ -13,17 +17,34 @@ import { decryptSecret, encryptSecret } from "./secrets";
 
 ensureRootEnvLoaded();
 
-interface StoredCredentials {
+interface StoredUser {
+  profile: AuthenticatedUser;
+  encryptedAccessToken?: string;
+}
+
+interface StoredTrackedRepository {
+  repoId: string;
+  repoName: string;
+  installationId: number;
+  ownerLogin: string;
+  ownerUserId: string;
+  enabled: boolean;
+}
+
+interface StoredRepoIntegration {
+  repoId: string;
+  ownerUserId: string;
   slackWebhookUrl?: string;
   discordWebhookUrl?: string;
+  updatedAt: string;
 }
 
 function defaultConfig(repoId: string, repoName: string): RepoConfig {
   return {
     repoId,
     repoName,
-    notifySlack: true,
-    notifyDiscord: true,
+    notifySlack: false,
+    notifyDiscord: false,
     quietHours: null,
     maxFilesPerAnalysis: 25,
     maxChunksPerAnalysis: 12,
@@ -41,13 +62,39 @@ function defaultMemory(repoId: string): RepoMemory {
   };
 }
 
+function toInstallUrl() {
+  const slug = process.env.GITHUB_APP_SLUG;
+  return slug ? `https://github.com/apps/${slug}/installations/new` : null;
+}
+
+function repoOwnerKey(ownerUserId: string, repoId: string) {
+  return `${ownerUserId}:${repoId}`;
+}
+
+function withIntegrationStatus(
+  repository: StoredTrackedRepository,
+  integration?: StoredRepoIntegration
+): TrackedRepository {
+  return {
+    ...repository,
+    slackConfigured: Boolean(decryptSecret(integration?.slackWebhookUrl)),
+    discordConfigured: Boolean(decryptSecret(integration?.discordWebhookUrl))
+  };
+}
+
+function sliceAnalysesForRepos(results: AnalysisResult[], repoIds: Set<string>, limit: number) {
+  return results.filter((item) => repoIds.has(item.snapshot.repoId)).slice(-limit).reverse();
+}
+
 export class MemoryStore {
+  private users = new Map<string, StoredUser>();
   private configs = new Map<string, RepoConfig>();
   private memories = new Map<string, RepoMemory>();
+  private trackedRepositories = new Map<string, StoredTrackedRepository>();
+  private repoIntegrations = new Map<string, StoredRepoIntegration>();
   private webhookEvents: WebhookEvent[] = [];
   private analyses: AnalysisResult[] = [];
   private deliveries: DeliveryRecord[] = [];
-  private credentials: StoredCredentials = {};
 
   ensureRepository(repoId: string, repoName: string) {
     if (!this.configs.has(repoId)) {
@@ -75,6 +122,147 @@ export class MemoryStore {
     return next;
   }
 
+  upsertUser(profile: AuthenticatedUser, accessToken?: string) {
+    const current = this.users.get(profile.userId);
+    this.users.set(profile.userId, {
+      profile,
+      encryptedAccessToken: accessToken
+        ? encryptSecret(accessToken)
+        : current?.encryptedAccessToken
+    });
+    return this.users.get(profile.userId)!.profile;
+  }
+
+  getUser(userId: string) {
+    return this.users.get(userId)?.profile ?? null;
+  }
+
+  getUserAccessToken(userId: string) {
+    return decryptSecret(this.users.get(userId)?.encryptedAccessToken);
+  }
+
+  replaceTrackedRepositoriesForUser(
+    ownerUserId: string,
+    repositories: Array<{
+      repoId: string;
+      repoName: string;
+      installationId: number;
+      ownerLogin: string;
+    }>
+  ) {
+    const nextRepoIds = new Set(repositories.map((repo) => repo.repoId));
+
+    for (const [key, repository] of this.trackedRepositories.entries()) {
+      if (repository.ownerUserId === ownerUserId && !nextRepoIds.has(repository.repoId)) {
+        this.trackedRepositories.delete(key);
+        this.repoIntegrations.delete(key);
+      }
+    }
+
+    for (const repository of repositories) {
+      this.ensureRepository(repository.repoId, repository.repoName);
+      const key = repoOwnerKey(ownerUserId, repository.repoId);
+      const existing = this.trackedRepositories.get(key);
+      this.trackedRepositories.set(key, {
+        repoId: repository.repoId,
+        repoName: repository.repoName,
+        installationId: repository.installationId,
+        ownerLogin: repository.ownerLogin,
+        ownerUserId,
+        enabled: existing?.enabled ?? true
+      });
+    }
+
+    return this.listTrackedRepositoriesForUser(ownerUserId);
+  }
+
+  listTrackedRepositoriesForUser(ownerUserId: string) {
+    return Array.from(this.trackedRepositories.values())
+      .filter((repository) => repository.ownerUserId === ownerUserId)
+      .sort((left, right) => left.repoName.localeCompare(right.repoName))
+      .map((repository) =>
+        withIntegrationStatus(
+          repository,
+          this.repoIntegrations.get(repoOwnerKey(ownerUserId, repository.repoId))
+        )
+      );
+  }
+
+  getTrackedRepositoryForUser(ownerUserId: string, repoId: string) {
+    const repository = this.trackedRepositories.get(repoOwnerKey(ownerUserId, repoId));
+    if (!repository) {
+      return null;
+    }
+    return withIntegrationStatus(
+      repository,
+      this.repoIntegrations.get(repoOwnerKey(ownerUserId, repoId))
+    );
+  }
+
+  isRepoTracked(repoId: string) {
+    return Array.from(this.trackedRepositories.values()).some((repository) => repository.repoId === repoId && repository.enabled);
+  }
+
+  saveRepoIntegration(ownerUserId: string, repoId: string, input: RepoIntegrationInput) {
+    const repository = this.trackedRepositories.get(repoOwnerKey(ownerUserId, repoId));
+    if (!repository) {
+      throw new Error("Repository is not tracked for this user.");
+    }
+    const key = repoOwnerKey(ownerUserId, repoId);
+    const current = this.repoIntegrations.get(key);
+    const next: StoredRepoIntegration = {
+      repoId,
+      ownerUserId,
+      slackWebhookUrl:
+        typeof input.slackWebhookUrl === "undefined"
+          ? current?.slackWebhookUrl
+          : input.slackWebhookUrl
+            ? encryptSecret(input.slackWebhookUrl)
+            : undefined,
+      discordWebhookUrl:
+        typeof input.discordWebhookUrl === "undefined"
+          ? current?.discordWebhookUrl
+          : input.discordWebhookUrl
+            ? encryptSecret(input.discordWebhookUrl)
+            : undefined,
+      updatedAt: new Date().toISOString()
+    };
+    this.repoIntegrations.set(key, next);
+    return this.getRepoIntegration(ownerUserId, repoId)!;
+  }
+
+  getRepoIntegration(ownerUserId: string, repoId: string): RepoIntegration | null {
+    const current = this.repoIntegrations.get(repoOwnerKey(ownerUserId, repoId));
+    if (!current) {
+      return null;
+    }
+    return {
+      repoId,
+      ownerUserId,
+      slackWebhookUrl: decryptSecret(current.slackWebhookUrl),
+      discordWebhookUrl: decryptSecret(current.discordWebhookUrl),
+      updatedAt: current.updatedAt
+    };
+  }
+
+  getDeliveryTargetsForRepo(repoId: string): DeliveryTargets {
+    const tracked = Array.from(this.trackedRepositories.values()).filter(
+      (repository) => repository.repoId === repoId && repository.enabled
+    );
+    const slackWebhookUrls = tracked
+      .map((repository) => decryptSecret(this.repoIntegrations.get(repoOwnerKey(repository.ownerUserId, repoId))?.slackWebhookUrl))
+      .filter((value): value is string => Boolean(value));
+    const discordWebhookUrls = tracked
+      .map((repository) => decryptSecret(this.repoIntegrations.get(repoOwnerKey(repository.ownerUserId, repoId))?.discordWebhookUrl))
+      .filter((value): value is string => Boolean(value));
+
+    return {
+      tracked: tracked.length > 0,
+      slackWebhookUrls: Array.from(new Set(slackWebhookUrls)),
+      discordWebhookUrls: Array.from(new Set(discordWebhookUrls))
+    };
+  }
+
   saveWebhookEvent(event: WebhookEvent) {
     if (this.webhookEvents.some((item) => item.deliveryId === event.deliveryId)) {
       return false;
@@ -91,36 +279,16 @@ export class MemoryStore {
     this.deliveries.push(...records);
   }
 
-  saveCredentials(input: IntegrationCredentialsInput) {
-    const next: StoredCredentials = { ...this.credentials };
-    if (typeof input.slackWebhookUrl !== "undefined") {
-      next.slackWebhookUrl = input.slackWebhookUrl ? encryptSecret(input.slackWebhookUrl) : undefined;
-    }
-    if (typeof input.discordWebhookUrl !== "undefined") {
-      next.discordWebhookUrl = input.discordWebhookUrl ? encryptSecret(input.discordWebhookUrl) : undefined;
-    }
-    this.credentials = next;
-  }
-
-  getCredentials() {
-    return {
-      slackWebhookUrl: decryptSecret(this.credentials.slackWebhookUrl),
-      discordWebhookUrl: decryptSecret(this.credentials.discordWebhookUrl)
-    };
-  }
-
   getCredentialsStatus(): IntegrationCredentialsStatus {
-    const current = this.getCredentials();
     return {
       githubAppConfigured: Boolean(process.env.GITHUB_APP_ID && process.env.GITHUB_APP_PRIVATE_KEY),
       githubOAuthConfigured: Boolean(process.env.GITHUB_CLIENT_ID && process.env.GITHUB_CLIENT_SECRET),
       githubWebhookSecretConfigured: Boolean(process.env.GITHUB_WEBHOOK_SECRET),
-      slackConfigured: Boolean(current.slackWebhookUrl),
-      discordConfigured: Boolean(current.discordWebhookUrl),
       groqConfigured: Boolean(process.env.GROQ_API_KEY),
       githubApiUrl: process.env.GITHUB_API_URL ?? "https://api.github.com",
       groqModelId: process.env.GROQ_MODEL_ID ?? "llama-3.3-70b-versatile",
-      aiProviderMode: (process.env.AI_PROVIDER_MODE as "heuristic" | "groq") ?? "heuristic"
+      aiProviderMode: (process.env.AI_PROVIDER_MODE as "heuristic" | "groq") ?? "heuristic",
+      githubAppInstallUrl: toInstallUrl()
     };
   }
 
@@ -128,32 +296,48 @@ export class MemoryStore {
     return this.analyses.slice(-limit).reverse();
   }
 
-  getAnalytics(): AnalyticsSnapshot {
-    const totalAnalyses = this.analyses.length;
-    const avgConfidence =
-      totalAnalyses === 0
-        ? 0
-        : this.analyses.reduce((sum, item) => sum + item.brief.confidence, 0) / totalAnalyses;
-    const avgFilesPerPr =
-      totalAnalyses === 0
-        ? 0
-        : this.analyses.reduce((sum, item) => sum + item.snapshot.files.length, 0) / totalAnalyses;
-    const attentionDistribution = this.analyses.reduce(
-      (acc, item) => {
-        acc[item.brief.attentionLevel] += 1;
-        return acc;
-      },
-      { low: 0, medium: 0, high: 0 }
-    );
-
-    return {
-      totalEvents: this.webhookEvents.length,
-      totalAnalyses,
-      avgConfidence: Number(avgConfidence.toFixed(2)),
-      avgFilesPerPr: Number(avgFilesPerPr.toFixed(2)),
-      attentionDistribution
-    };
+  getRecentActivityForUser(userId: string, limit = 10) {
+    const repoIds = new Set(this.listTrackedRepositoriesForUser(userId).map((repository) => repository.repoId));
+    return sliceAnalysesForRepos(this.analyses, repoIds, limit);
   }
+
+  getAnalytics(): AnalyticsSnapshot {
+    return buildAnalytics(this.analyses, this.webhookEvents.length);
+  }
+
+  getAnalyticsForUser(userId: string) {
+    const repoIds = new Set(this.listTrackedRepositoriesForUser(userId).map((repository) => repository.repoId));
+    const analyses = this.analyses.filter((item) => repoIds.has(item.snapshot.repoId));
+    const totalEvents = this.webhookEvents.filter((event) => repoIds.has(event.snapshot.repoId)).length;
+    return buildAnalytics(analyses, totalEvents);
+  }
+}
+
+function buildAnalytics(analyses: AnalysisResult[], totalEvents: number): AnalyticsSnapshot {
+  const totalAnalyses = analyses.length;
+  const avgConfidence =
+    totalAnalyses === 0
+      ? 0
+      : analyses.reduce((sum, item) => sum + item.brief.confidence, 0) / totalAnalyses;
+  const avgFilesPerPr =
+    totalAnalyses === 0
+      ? 0
+      : analyses.reduce((sum, item) => sum + item.snapshot.files.length, 0) / totalAnalyses;
+  const attentionDistribution = analyses.reduce(
+    (acc, item) => {
+      acc[item.brief.attentionLevel] += 1;
+      return acc;
+    },
+    { low: 0, medium: 0, high: 0 }
+  );
+
+  return {
+    totalEvents,
+    totalAnalyses,
+    avgConfidence: Number(avgConfidence.toFixed(2)),
+    avgFilesPerPr: Number(avgFilesPerPr.toFixed(2)),
+    attentionDistribution
+  };
 }
 
 declare global {

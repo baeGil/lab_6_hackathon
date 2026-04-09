@@ -36,6 +36,20 @@ export interface PullRequestFile {
   language?: string;
 }
 
+export interface AuthenticatedUser {
+  userId: string;
+  githubId: string;
+  login: string;
+  name?: string;
+  avatarUrl?: string;
+}
+
+export interface GitHubAccountToken {
+  userId: string;
+  accessToken: string;
+  updatedAt: string;
+}
+
 export interface PullRequestSnapshot {
   repoId: string;
   repoName: string;
@@ -193,19 +207,43 @@ export interface AnalyticsSnapshot {
   attentionDistribution: Record<AttentionLevel, number>;
 }
 
-export interface IntegrationCredentialsInput {
+export interface RepoIntegrationInput {
   slackWebhookUrl?: string;
   discordWebhookUrl?: string;
+}
+
+export interface RepoIntegration {
+  repoId: string;
+  ownerUserId: string;
+  slackWebhookUrl?: string;
+  discordWebhookUrl?: string;
+  updatedAt: string;
+}
+
+export interface TrackedRepository {
+  repoId: string;
+  repoName: string;
+  installationId: number;
+  ownerLogin: string;
+  ownerUserId: string;
+  enabled: boolean;
+  slackConfigured: boolean;
+  discordConfigured: boolean;
+}
+
+export interface DeliveryTargets {
+  tracked: boolean;
+  slackWebhookUrls: string[];
+  discordWebhookUrls: string[];
 }
 
 export interface IntegrationCredentialsStatus {
   githubAppConfigured: boolean;
   githubOAuthConfigured: boolean;
   githubWebhookSecretConfigured: boolean;
-  slackConfigured: boolean;
-  discordConfigured: boolean;
   groqConfigured: boolean;
   githubApiUrl: string;
   groqModelId: string;
   aiProviderMode: "heuristic" | "groq";
+  githubAppInstallUrl: string | null;
 }

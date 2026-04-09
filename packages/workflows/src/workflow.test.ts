@@ -36,6 +36,19 @@ const baseEvent = {
 describe("workflow", () => {
   it("processes a webhook end-to-end", async () => {
     const store = new MemoryStore();
+    store.upsertUser({ userId: "github:1", githubId: "1", login: "alice" }, "token-1");
+    store.replaceTrackedRepositoriesForUser("github:1", [
+      {
+        repoId: "repo-1",
+        repoName: "demo/repo",
+        installationId: 99,
+        ownerLogin: "alice"
+      }
+    ]);
+    store.saveRepoIntegration("github:1", "repo-1", {
+      slackWebhookUrl: "https://hooks.slack.test/one",
+      discordWebhookUrl: "https://discord.test/one"
+    });
     const github = new FakeGitHubAdapter();
     const slack = new FakeSlackAdapter();
     const discord = new FakeDiscordAdapter();
@@ -60,6 +73,19 @@ describe("workflow", () => {
 
   it("deduplicates webhook deliveries", async () => {
     const store = new MemoryStore();
+    store.upsertUser({ userId: "github:1", githubId: "1", login: "alice" }, "token-1");
+    store.replaceTrackedRepositoriesForUser("github:1", [
+      {
+        repoId: "repo-1",
+        repoName: "demo/repo",
+        installationId: 99,
+        ownerLogin: "alice"
+      }
+    ]);
+    store.saveRepoIntegration("github:1", "repo-1", {
+      slackWebhookUrl: "https://hooks.slack.test/one",
+      discordWebhookUrl: "https://discord.test/one"
+    });
     const github = new FakeGitHubAdapter();
     const slack = new FakeSlackAdapter();
     const discord = new FakeDiscordAdapter();

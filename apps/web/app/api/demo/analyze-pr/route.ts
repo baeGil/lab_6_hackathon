@@ -81,12 +81,13 @@ export async function POST(request: Request) {
     const body = (await request.json()) as DemoRequest;
     const fakeWebhookPayload = await fetchPullRequestWebhookShape(body);
     const event = await buildWebhookEventFromGitHubPayload(fakeWebhookPayload, "opened", crypto.randomUUID());
+    const deliveryTargets = store.getDeliveryTargetsForRepo(event.snapshot.repoId);
     const result = await handleWebhookEvent(event, {
       store,
       provider: createProvider(),
       github: createGitHubAdapter(),
-      slack: createSlackAdapter(undefined, store),
-      discord: createDiscordAdapter(undefined, store)
+      slack: createSlackAdapter(deliveryTargets.slackWebhookUrls),
+      discord: createDiscordAdapter(deliveryTargets.discordWebhookUrls)
     });
     return NextResponse.json(result);
   } catch (error) {

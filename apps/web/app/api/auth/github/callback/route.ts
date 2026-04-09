@@ -1,6 +1,7 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
-import { getSessionCookieName, getStateCookieName, signSession } from "../../../../../../../packages/shared/src/auth";
+import { getStore } from "../../../../../../../packages/db/src/store";
+import { buildUserId, getSessionCookieName, getStateCookieName, signSession } from "../../../../../../../packages/shared/src/auth";
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
@@ -11,12 +12,13 @@ export async function GET(request: Request) {
   const clientId = process.env.GITHUB_CLIENT_ID;
   const clientSecret = process.env.GITHUB_CLIENT_SECRET;
   const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+  const secureCookie = appUrl.startsWith("https://");
 
   if (!code || !state || !expectedState || state !== expectedState) {
-    return NextResponse.redirect(`${appUrl}/integrations?auth=failed`);
+    return NextResponse.redirect(`${appUrl}/repositories?auth=failed`);
   }
   if (!clientId || !clientSecret) {
-    return NextResponse.redirect(`${appUrl}/integrations?auth=missing-client`);
+    return NextResponse.redirect(`${appUrl}/repositories?auth=missing-client`);
   }
 
   const tokenResponse = await fetch("https://github.com/login/oauth/access_token", {
@@ -32,11 +34,11 @@ export async function GET(request: Request) {
     })
   });
   if (!tokenResponse.ok) {
-    return NextResponse.redirect(`${appUrl}/integrations?auth=token-error`);
+    return NextResponse.redirect(`${appUrl}/repositories?auth=token-error`);
   }
   const tokenData = (await tokenResponse.json()) as { access_token?: string };
   if (!tokenData.access_token) {
-    return NextResponse.redirect(`${appUrl}/integrations?auth=no-token`);
+    return NextResponse.redirect(`${appUrl}/repositories?auth=no-token`);
   }
 
   const userResponse = await fetch("https://api.github.com/user", {
@@ -47,7 +49,7 @@ export async function GET(request: Request) {
     }
   });
   if (!userResponse.ok) {
-    return NextResponse.redirect(`${appUrl}/integrations?auth=user-error`);
+    return NextResponse.redirect(`${appUrl}/repositories?auth=user-error`);
   }
   const user = (await userResponse.json()) as {
     id: number;
@@ -56,15 +58,28 @@ export async function GET(request: Request) {
     avatar_url?: string;
   };
 
-  const response = NextResponse.redirect(`${appUrl}/integrations?auth=ok`);
+  const userId = buildUserId(String(user.id));
+  getStore().upsertUser(
+    {
+      userId,
+      githubId: String(user.id),
+      login: user.login,
+      name: user.name,
+      avatarUrl: user.avatar_url
+    },
+    tokenData.access_token
+  );
+
+  const response = NextResponse.redirect(`${appUrl}/repositories?auth=ok`);
   response.cookies.set(getSessionCookieName(), signSession({
+    userId,
     githubId: String(user.id),
     login: user.login,
     name: user.name,
     avatarUrl: user.avatar_url
   }), {
     httpOnly: true,
-    secure: false,
+    secure: secureCookie,
     sameSite: "lax",
     path: "/"
   });

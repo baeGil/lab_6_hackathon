@@ -9,10 +9,10 @@ export const metadata = {
 
 const navItems = [
   { href: "/", label: "Overview" },
-  { href: "/integrations", label: "Integrations" },
-  { href: "/live-demo", label: "Live Demo" },
   { href: "/repositories", label: "Repositories" },
-  { href: "/analytics", label: "Analytics" }
+  { href: "/integrations", label: "Integrations" },
+  { href: "/analytics", label: "Analytics" },
+  { href: "/live-demo", label: "Live Demo" }
 ];
 
 export default async function RootLayout({ children }: { children: ReactNode }) {

@@ -1,5 +1,7 @@
+import { cookies } from "next/headers";
 import type { CSSProperties } from "react";
 import { getStore } from "../../../packages/db/src/store";
+import { getSessionCookieName, verifySession } from "../../../packages/shared/src/auth";
 
 function Card({
   title,
@@ -19,10 +21,12 @@ function Card({
   );
 }
 
-export default function HomePage() {
+export default async function HomePage() {
+  const cookieStore = await cookies();
+  const session = verifySession(cookieStore.get(getSessionCookieName())?.value);
   const store = getStore();
-  const analytics = store.getAnalytics();
-  const activity = store.getRecentActivity(5);
+  const analytics = session ? store.getAnalyticsForUser(session.userId) : store.getAnalytics();
+  const activity = session ? store.getRecentActivityForUser(session.userId, 5) : [];
 
   return (
     <div style={{ display: "grid", gap: 24 }}>
@@ -48,7 +52,9 @@ export default function HomePage() {
         <h3 style={styles.sectionTitle}>Recent Activity</h3>
         {activity.length === 0 ? (
           <p style={styles.empty}>
-            No PR has been processed yet. Send a POST request to <code>/api/webhooks/github</code> with a fixture event.
+            {session
+              ? "No tracked repository activity yet. Sync repositories, add per-repo integrations, then open a pull request."
+              : "Sign in with GitHub to see the repositories and activity scoped to your account."}
           </p>
         ) : (
           <div style={{ display: "grid", gap: 12 }}>

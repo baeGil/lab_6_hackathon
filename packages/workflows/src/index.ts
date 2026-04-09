@@ -37,7 +37,13 @@ export async function handleWebhookEvent(event: WebhookEvent, deps: WorkflowDepe
   }
 
   const snapshot = event.snapshot;
-  const config = store.getConfig(snapshot.repoId, snapshot.repoName);
+  const deliveryTargets = store.getDeliveryTargetsForRepo(snapshot.repoId);
+  const baseConfig = store.getConfig(snapshot.repoId, snapshot.repoName);
+  const config = {
+    ...baseConfig,
+    notifySlack: deliveryTargets.slackWebhookUrls.length > 0,
+    notifyDiscord: deliveryTargets.discordWebhookUrls.length > 0
+  };
   const memory = store.getMemory(snapshot.repoId, snapshot.repoName);
   const provider = deps.provider ?? new HeuristicAiProvider();
 

@@ -1,14 +1,10 @@
 import { ensureRootEnvLoaded } from "./env";
+import type { AuthenticatedUser } from "./index";
 import crypto from "node:crypto";
 
 ensureRootEnvLoaded();
 
-export interface UserSession {
-  githubId: string;
-  login: string;
-  name?: string;
-  avatarUrl?: string;
-}
+export interface UserSession extends AuthenticatedUser {}
 
 const SESSION_COOKIE = "printel_session";
 const STATE_COOKIE = "printel_oauth_state";
@@ -27,6 +23,10 @@ export function getStateCookieName() {
 
 export function generateOauthState() {
   return crypto.randomBytes(24).toString("hex");
+}
+
+export function buildUserId(githubId: string) {
+  return `github:${githubId}`;
 }
 
 export function signSession(session: UserSession) {

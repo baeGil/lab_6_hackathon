@@ -17,6 +17,19 @@ async function runScenario(
   options: { duplicate?: boolean; slackFailOnce?: boolean } = {}
 ): Promise<ScenarioResult> {
   const store = new MemoryStore();
+  store.upsertUser({ userId: "github:1", githubId: "1", login: "alice" }, "token-1");
+  store.replaceTrackedRepositoriesForUser("github:1", [
+    {
+      repoId: "repo-1",
+      repoName: "demo/repo",
+      installationId: 99,
+      ownerLogin: "alice"
+    }
+  ]);
+  store.saveRepoIntegration("github:1", "repo-1", {
+    slackWebhookUrl: "https://hooks.slack.test/team",
+    discordWebhookUrl: "https://discord.test/team"
+  });
   const github = new FakeGitHubAdapter();
   const slack = new FakeSlackAdapter(options.slackFailOnce);
   const discord = new FakeDiscordAdapter();
