@@ -1,11 +1,35 @@
 import type {
   CanonicalBrief,
+  ContextInsight,
+  CritiqueReport,
   FileSummary,
+  ReviewPlan,
   RiskFinding,
+  SecurityFinding,
   TestFinding
 } from "../../shared/src/index";
+import { z } from "zod";
+import {
+  canonicalBriefSchema,
+  contextInsightSchema,
+  critiqueReportSchema,
+  fileSummarySchema,
+  reviewPlanSchema,
+  riskFindingSchema,
+  securityFindingSchema,
+  testFindingSchema
+} from "./contracts";
 import { HeuristicAiProvider } from "./heuristic-provider";
-import { fileSummaryMessages, riskMessages, synthesisMessages, testingMessages } from "./prompts";
+import {
+  contextMessages,
+  critiqueMessages,
+  fileSummaryMessages,
+  plannerMessages,
+  riskMessages,
+  securityMessages,
+  synthesisMessages,
+  testingMessages
+} from "./prompts";
 import type { AiProvider, AnalysisContext } from "./provider";
 
 interface GroqResponse {
@@ -14,6 +38,10 @@ interface GroqResponse {
       content?: string;
     };
   }>;
+}
+
+function parser<T>(schema: { parse(data: unknown): unknown }) {
+  return schema as { parse(data: unknown): T };
 }
 
 export class GroqAiProvider implements AiProvider {
@@ -30,35 +58,104 @@ export class GroqAiProvider implements AiProvider {
     this.modelId = modelId;
   }
 
-  async analyzeFiles(context: AnalysisContext): Promise<FileSummary[]> {
-    const fallback = () => this.fallback.analyzeFiles(context);
-    return this.callJson<FileSummary[]>(fileSummaryMessages(context), fallback);
+  async planReview(context: AnalysisContext): Promise<ReviewPlan> {
+    return this.callJson<ReviewPlan>(parser<ReviewPlan>(reviewPlanSchema), plannerMessages(context), () =>
+      this.fallback.planReview(context)
+    );
   }
 
-  async reviewRisks(context: AnalysisContext, fileSummaries: FileSummary[]): Promise<RiskFinding[]> {
-    const fallback = () => this.fallback.reviewRisks(context, fileSummaries);
-    return this.callJson<RiskFinding[]>(riskMessages(context, fileSummaries), fallback);
+  async collectContext(context: AnalysisContext, reviewPlan: ReviewPlan): Promise<ContextInsight> {
+    return this.callJson<ContextInsight>(parser<ContextInsight>(contextInsightSchema), contextMessages(context, reviewPlan), () =>
+      this.fallback.collectContext(context, reviewPlan)
+    );
   }
 
-  async planTesting(context: AnalysisContext, fileSummaries: FileSummary[]): Promise<TestFinding[]> {
-    const fallback = () => this.fallback.planTesting(context, fileSummaries);
-    return this.callJson<TestFinding[]>(testingMessages(context, fileSummaries), fallback);
+  async reviewSecurity(
+    context: AnalysisContext,
+    reviewPlan: ReviewPlan,
+    contextInsight: ContextInsight
+  ): Promise<SecurityFinding[]> {
+    return this.callJson<SecurityFinding[]>(
+      parser<SecurityFinding[]>(z.array(securityFindingSchema)),
+      securityMessages(context, reviewPlan, contextInsight),
+      () => this.fallback.reviewSecurity(context, reviewPlan, contextInsight)
+    );
+  }
+
+  async analyzeFiles(
+    context: AnalysisContext,
+    reviewPlan: ReviewPlan,
+    contextInsight: ContextInsight
+  ): Promise<FileSummary[]> {
+    return this.callJson<FileSummary[]>(
+      parser<FileSummary[]>(z.array(fileSummarySchema)),
+      fileSummaryMessages(context, reviewPlan, contextInsight),
+      () => this.fallback.analyzeFiles(context, reviewPlan, contextInsight)
+    );
+  }
+
+  async reviewRisks(
+    context: AnalysisContext,
+    fileSummaries: FileSummary[],
+    reviewPlan: ReviewPlan,
+    contextInsight: ContextInsight
+  ): Promise<RiskFinding[]> {
+    return this.callJson<RiskFinding[]>(
+      parser<RiskFinding[]>(z.array(riskFindingSchema)),
+      riskMessages(context, fileSummaries, reviewPlan, contextInsight, context.securityFindings),
+      () => this.fallback.reviewRisks(context, fileSummaries, reviewPlan, contextInsight)
+    );
+  }
+
+  async planTesting(
+    context: AnalysisContext,
+    fileSummaries: FileSummary[],
+    reviewPlan: ReviewPlan,
+    contextInsight: ContextInsight
+  ): Promise<TestFinding[]> {
+    return this.callJson<TestFinding[]>(
+      parser<TestFinding[]>(z.array(testFindingSchema)),
+      testingMessages(context, fileSummaries, reviewPlan, contextInsight),
+      () => this.fallback.planTesting(context, fileSummaries, reviewPlan, contextInsight)
+    );
   }
 
   async synthesize(
     context: AnalysisContext,
+    reviewPlan: ReviewPlan,
+    contextInsight: ContextInsight,
     fileSummaries: FileSummary[],
+    securityFindings: SecurityFinding[],
     riskFindings: RiskFinding[],
     testFindings: TestFinding[]
   ): Promise<CanonicalBrief> {
-    const fallback = () => this.fallback.synthesize(context, fileSummaries, riskFindings, testFindings);
     return this.callJson<CanonicalBrief>(
-      synthesisMessages(context, fileSummaries, riskFindings, testFindings),
-      fallback
+      parser<CanonicalBrief>(canonicalBriefSchema),
+      synthesisMessages(context, reviewPlan, contextInsight, fileSummaries, securityFindings, riskFindings, testFindings),
+      () => this.fallback.synthesize(context, reviewPlan, contextInsight, fileSummaries, securityFindings, riskFindings, testFindings)
     );
   }
 
-  private async callJson<T>(messages: Array<{ role: "system" | "user"; content: string }>, fallback: () => Promise<T>): Promise<T> {
+  async critique(
+    context: AnalysisContext,
+    reviewPlan: ReviewPlan,
+    contextInsight: ContextInsight,
+    brief: CanonicalBrief,
+    riskFindings: RiskFinding[],
+    testFindings: TestFinding[]
+  ): Promise<CritiqueReport> {
+    return this.callJson<CritiqueReport>(
+      parser<CritiqueReport>(critiqueReportSchema),
+      critiqueMessages(context, reviewPlan, contextInsight, brief, riskFindings, testFindings),
+      () => this.fallback.critique(context, reviewPlan, contextInsight, brief, riskFindings, testFindings)
+    );
+  }
+
+  private async callJson<T>(
+    schema: { parse(data: unknown): T },
+    messages: Array<{ role: "system" | "user"; content: string }>,
+    fallback: () => Promise<T>
+  ): Promise<T> {
     try {
       const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
         method: "POST",
@@ -68,7 +165,7 @@ export class GroqAiProvider implements AiProvider {
         },
         body: JSON.stringify({
           model: this.modelId,
-          temperature: 0.2,
+          temperature: 0.15,
           messages
         })
       });
@@ -83,7 +180,7 @@ export class GroqAiProvider implements AiProvider {
         throw new Error("Groq response did not include message content.");
       }
       const cleaned = content.replace(/^```json\s*/i, "").replace(/```$/i, "").trim();
-      return JSON.parse(cleaned) as T;
+      return schema.parse(JSON.parse(cleaned));
     } catch {
       return fallback();
     }

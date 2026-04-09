@@ -109,6 +109,8 @@ function renderCanonicalComment(result: AnalysisResult) {
     "<!-- pr-intelligence-canonical -->",
     `## ${result.brief.title}`,
     "",
+    result.brief.eventSummary,
+    "",
     "### What changed",
     ...result.brief.whatChanged.map((item) => `- ${item}`),
     "",
@@ -121,9 +123,19 @@ function renderCanonicalComment(result: AnalysisResult) {
     `### Attention level`,
     result.brief.attentionLevel,
     "",
+    "### Reviewer posture",
+    result.brief.reviewerPosture,
+    "",
     "### Test impact",
     ...result.brief.testImpact.map((item) => `- ${item}`),
     "",
+    "### Next actions",
+    ...result.brief.nextActions.map((item) => `- ${item}`),
+    "",
+    ...(result.brief.missingContext.length > 0
+      ? ["### Missing context", ...result.brief.missingContext.map((item) => `- ${item}`), ""]
+      : []),
+    ...(result.brief.escalationNote ? ["### Escalation", result.brief.escalationNote, ""] : []),
     `Confidence: ${result.brief.confidence}`,
     result.brief.disclaimer
   ].join("\n");
@@ -232,6 +244,7 @@ export class RealGitHubAdapter implements GitHubAdapter {
     const name = "PR Intelligence Agent";
     const summary = [
       `Attention level: ${result.brief.attentionLevel}`,
+      `Reviewer posture: ${result.brief.reviewerPosture}`,
       `Confidence: ${result.brief.confidence}`,
       ...result.brief.reviewerFocus.slice(0, 3)
     ].join("\n");

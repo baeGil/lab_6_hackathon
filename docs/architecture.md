@@ -14,14 +14,21 @@ flowchart TD
     A[GitHub webhook event] --> B[Next.js API route]
     B --> C[MemoryStore dedupe + persistence]
     C --> D[Workflow orchestration]
-    D --> E[LangGraphJS analysis graph]
-    E --> F[Canonical brief]
-    F --> G[GitHub adapter]
-    F --> H[Slack adapter]
-    F --> I[Discord adapter]
-    G --> J[Delivery log]
-    H --> J
-    I --> J
+    D --> E[Planner Agent]
+    E --> F[Context Retrieval Agent]
+    F --> G[Security Agent]
+    G --> H[Code Understanding Agent]
+    H --> I[Risk Reviewer Agent]
+    I --> J[Testing Agent]
+    J --> K[Synthesis Agent]
+    K --> L[Critic Agent]
+    L --> M[Canonical brief]
+    M --> N[GitHub adapter]
+    M --> O[Slack adapter]
+    M --> P[Discord adapter]
+    N --> Q[Delivery log]
+    O --> Q
+    P --> Q
 ```
 
 ## Package map

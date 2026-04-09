@@ -1,18 +1,25 @@
 import { Annotation, END, START, StateGraph } from "@langchain/langgraph";
 import {
   chooseStrategy,
+  deriveFocusAreas,
   filterRelevantFiles,
   maskSensitiveTokens,
-  rankImportantFiles
+  mergeStrategies,
+  rankImportantFiles,
+  selectFilesForPlan
 } from "../../ai-core/src/utils";
-import type { AiProvider } from "../../ai-core/src/provider";
+import type { AiProvider, AnalysisContext } from "../../ai-core/src/provider";
 import type {
   AnalysisResult,
+  CanonicalBrief,
+  ContextInsight,
+  CritiqueReport,
   NotificationPayload,
   PullRequestFile,
   PullRequestSnapshot,
   RepoConfig,
   RepoMemory,
+  ReviewPlan,
   RiskFinding,
   SecurityFinding,
   TestFinding
@@ -22,7 +29,10 @@ const GraphAnnotation = Annotation.Root({
   snapshot: Annotation<PullRequestSnapshot>(),
   config: Annotation<RepoConfig>(),
   memory: Annotation<RepoMemory>(),
-  strategy: Annotation<"shallow" | "normal" | "deep" | "partial">(),
+  reviewPlan: Annotation<ReviewPlan | null>({
+    reducer: (_left, right) => right,
+    default: () => null
+  }),
   workingFiles: Annotation<PullRequestFile[]>({
     reducer: (_left, right) => right,
     default: () => []
@@ -30,6 +40,10 @@ const GraphAnnotation = Annotation.Root({
   importantFiles: Annotation<string[]>({
     reducer: (_left, right) => right,
     default: () => []
+  }),
+  contextInsight: Annotation<ContextInsight | null>({
+    reducer: (_left, right) => right,
+    default: () => null
   }),
   securityFindings: Annotation<SecurityFinding[]>({
     reducer: (_left, right) => right,
@@ -47,7 +61,11 @@ const GraphAnnotation = Annotation.Root({
     reducer: (_left, right) => right,
     default: () => []
   }),
-  brief: Annotation<AnalysisResult["brief"] | null>({
+  brief: Annotation<CanonicalBrief | null>({
+    reducer: (_left, right) => right,
+    default: () => null
+  }),
+  critique: Annotation<CritiqueReport | null>({
     reducer: (_left, right) => right,
     default: () => null
   }),
@@ -72,24 +90,49 @@ export interface GraphInput {
   provider: AiProvider;
 }
 
+function makeContext(state: {
+  snapshot: PullRequestSnapshot;
+  memory: RepoMemory;
+  workingFiles: PullRequestFile[];
+  importantFiles: string[];
+  securityFindings: SecurityFinding[];
+}): AnalysisContext {
+  return {
+    snapshot: state.snapshot,
+    files: state.workingFiles,
+    memory: state.memory,
+    securityFindings: state.securityFindings,
+    importantFiles: state.importantFiles
+  };
+}
+
 function renderPayload(
   channel: "github" | "slack" | "discord",
   snapshot: PullRequestSnapshot,
-  brief: NonNullable<AnalysisResult["brief"]>
+  brief: CanonicalBrief,
+  critique: CritiqueReport
 ): NotificationPayload {
+  const summary = [
+    brief.eventSummary,
+    ...brief.whatChanged.slice(0, 2),
+    `Attention: ${brief.attentionLevel}`,
+    `Reviewer posture: ${brief.reviewerPosture}`,
+    `Confidence: ${brief.confidence}`
+  ];
+  if (brief.escalationNote) {
+    summary.push(`Escalation: ${brief.escalationNote}`);
+  }
+
   return {
     channel,
     heading: `${snapshot.repoName} PR #${snapshot.prNumber}`,
-    summary: [
-      ...brief.whatChanged.slice(0, 2),
-      `Attention: ${brief.attentionLevel}`,
-      `Confidence: ${brief.confidence}`
-    ],
+    summary,
     attentionLevel: brief.attentionLevel,
-    confidence: brief.confidence,
+    confidence: critique.confidence,
     links: [
       { label: "Open PR", url: snapshot.url },
-      { label: "Open Head Branch", url: `${snapshot.url}/files` }
+      { label: "Open Files", url: `${snapshot.url}/files` },
+      { label: "Open Checks", url: `${snapshot.url}/checks` }
     ]
   };
 }
@@ -100,96 +143,145 @@ export async function runAnalysisGraph(input: GraphInput): Promise<AnalysisResul
   const graph = new StateGraph(GraphAnnotation)
     .addNode("planner", async (state) => {
       const relevantFiles = filterRelevantFiles(state.snapshot.files, state.memory);
+      const importantFiles = rankImportantFiles(relevantFiles, state.memory);
+      const deterministicStrategy = chooseStrategy(relevantFiles, state.config);
+      const planningContext: AnalysisContext = {
+        snapshot: state.snapshot,
+        files: relevantFiles,
+        memory: state.memory,
+        securityFindings: [],
+        importantFiles
+      };
+      const agentPlan = await provider.planReview(planningContext);
+      const reviewPlan: ReviewPlan = {
+        ...agentPlan,
+        strategy: mergeStrategies(agentPlan.strategy, deterministicStrategy),
+        focusAreas: agentPlan.focusAreas.length > 0 ? agentPlan.focusAreas : deriveFocusAreas(relevantFiles, state.memory)
+      };
       return {
         workingFiles: relevantFiles,
-        strategy: chooseStrategy(relevantFiles, state.config),
-        importantFiles: rankImportantFiles(relevantFiles, state.memory)
+        importantFiles,
+        reviewPlan
       };
     })
-    .addNode("contextCollector", async (state) => ({
-      workingFiles:
-        state.strategy === "partial"
-          ? state.workingFiles.slice(0, state.config.maxFilesPerAnalysis)
-          : state.workingFiles
-    }))
+    .addNode("contextCollector", async (state) => {
+      if (!state.reviewPlan) return {};
+      const selectedFiles = selectFilesForPlan(state.workingFiles, state.reviewPlan, state.config);
+      const contextInsight = await provider.collectContext(
+        {
+          snapshot: state.snapshot,
+          files: selectedFiles,
+          memory: state.memory,
+          securityFindings: [],
+          importantFiles: state.importantFiles
+        },
+        state.reviewPlan
+      );
+      return {
+        workingFiles: selectedFiles,
+        contextInsight
+      };
+    })
     .addNode("securityAgent", async (state) => {
+      if (!state.reviewPlan || !state.contextInsight) return {};
       const masked = maskSensitiveTokens(state.workingFiles, state.memory);
+      const semanticFindings = await provider.reviewSecurity(
+        {
+          snapshot: state.snapshot,
+          files: masked.maskedFiles,
+          memory: state.memory,
+          securityFindings: masked.findings,
+          importantFiles: state.importantFiles
+        },
+        state.reviewPlan,
+        state.contextInsight
+      );
       return {
         workingFiles: masked.maskedFiles,
-        securityFindings: masked.findings
+        securityFindings: [...masked.findings, ...semanticFindings]
       };
     })
-    .addNode("codeUnderstandingAgent", async (state) => ({
-      fileSummaries: await provider.analyzeFiles({
-        snapshot: state.snapshot,
-        files: state.workingFiles,
-        memory: state.memory,
-        securityFindings: state.securityFindings,
-        importantFiles: state.importantFiles
-      })
-    }))
-    .addNode("riskReviewerAgent", async (state) => ({
-      riskFindings: await provider.reviewRisks(
-        {
-          snapshot: state.snapshot,
-          files: state.workingFiles,
-          memory: state.memory,
-          securityFindings: state.securityFindings,
-          importantFiles: state.importantFiles
-        },
-        state.fileSummaries
-      )
-    }))
-    .addNode("testingAgent", async (state) => ({
-      testFindings: await provider.planTesting(
-        {
-          snapshot: state.snapshot,
-          files: state.workingFiles,
-          memory: state.memory,
-          securityFindings: state.securityFindings,
-          importantFiles: state.importantFiles
-        },
-        state.fileSummaries
-      )
-    }))
-    .addNode("synthesisAgent", async (state) => ({
-      brief: await provider.synthesize(
-        {
-          snapshot: state.snapshot,
-          files: state.workingFiles,
-          memory: state.memory,
-          securityFindings: state.securityFindings,
-          importantFiles: state.importantFiles
-        },
-        state.fileSummaries,
+    .addNode("codeUnderstandingAgent", async (state) => {
+      if (!state.reviewPlan || !state.contextInsight) return {};
+      return {
+        fileSummaries: await provider.analyzeFiles(
+          makeContext(state),
+          state.reviewPlan,
+          state.contextInsight
+        )
+      };
+    })
+    .addNode("riskReviewerAgent", async (state) => {
+      if (!state.reviewPlan || !state.contextInsight) return {};
+      return {
+        riskFindings: await provider.reviewRisks(
+          makeContext(state),
+          state.fileSummaries,
+          state.reviewPlan,
+          state.contextInsight
+        )
+      };
+    })
+    .addNode("testingAgent", async (state) => {
+      if (!state.reviewPlan || !state.contextInsight) return {};
+      return {
+        testFindings: await provider.planTesting(
+          makeContext(state),
+          state.fileSummaries,
+          state.reviewPlan,
+          state.contextInsight
+        )
+      };
+    })
+    .addNode("synthesisAgent", async (state) => {
+      if (!state.reviewPlan || !state.contextInsight) return {};
+      return {
+        brief: await provider.synthesize(
+          makeContext(state),
+          state.reviewPlan,
+          state.contextInsight,
+          state.fileSummaries,
+          state.securityFindings,
+          state.riskFindings,
+          state.testFindings
+        )
+      };
+    })
+    .addNode("criticAgent", async (state) => {
+      if (!state.reviewPlan || !state.contextInsight || !state.brief) return {};
+      const critique = await provider.critique(
+        makeContext(state),
+        state.reviewPlan,
+        state.contextInsight,
+        state.brief,
         state.riskFindings,
         state.testFindings
-      )
-    }))
-    .addNode("confidenceEscalationAgent", async (state) => {
-      if (!state.brief) return {};
-      const missingContext = [...state.brief.missingContext];
-      let confidence = state.brief.confidence;
-      if (state.strategy === "partial") {
-        missingContext.push("Analysis ran in partial mode because the PR exceeded the free-tier review budget.");
-        confidence = Math.max(0.35, confidence - 0.15);
-      }
+      );
+
       return {
+        critique,
         brief: {
           ...state.brief,
-          confidence: Number(confidence.toFixed(2)),
-          missingContext
+          confidence: critique.confidence,
+          missingContext: critique.missingContext,
+          reviewerPosture: critique.reviewerPosture,
+          escalationNote: critique.escalationNote ?? state.brief.escalationNote
         }
       };
     })
     .addNode("personaComposerAgent", async (state) => {
-      if (!state.brief) return {};
+      if (!state.brief || !state.reviewPlan || !state.critique) return {};
+      const publishToChannels = state.critique.publishToChannels;
       return {
-        githubPayload: renderPayload("github", state.snapshot, state.brief),
-        slackPayload: state.config.notifySlack ? renderPayload("slack", state.snapshot, state.brief) : null,
-        discordPayload: state.config.notifyDiscord
-          ? renderPayload("discord", state.snapshot, state.brief)
-          : null
+        githubPayload: renderPayload("github", state.snapshot, state.brief, state.critique),
+        slackPayload:
+          state.config.notifySlack && publishToChannels
+            ? renderPayload("slack", state.snapshot, state.brief, state.critique)
+            : null,
+        discordPayload:
+          state.config.notifyDiscord && publishToChannels
+            ? renderPayload("discord", state.snapshot, state.brief, state.critique)
+            : null
       };
     })
     .addEdge(START, "planner")
@@ -199,8 +291,8 @@ export async function runAnalysisGraph(input: GraphInput): Promise<AnalysisResul
     .addEdge("codeUnderstandingAgent", "riskReviewerAgent")
     .addEdge("riskReviewerAgent", "testingAgent")
     .addEdge("testingAgent", "synthesisAgent")
-    .addEdge("synthesisAgent", "confidenceEscalationAgent")
-    .addEdge("confidenceEscalationAgent", "personaComposerAgent")
+    .addEdge("synthesisAgent", "criticAgent")
+    .addEdge("criticAgent", "personaComposerAgent")
     .addEdge("personaComposerAgent", END)
     .compile();
 
@@ -210,18 +302,21 @@ export async function runAnalysisGraph(input: GraphInput): Promise<AnalysisResul
     memory: input.memory
   });
 
-  if (!result.brief || !result.githubPayload) {
+  if (!result.brief || !result.githubPayload || !result.reviewPlan || !result.contextInsight || !result.critique) {
     throw new Error("Analysis graph failed to produce a canonical brief.");
   }
 
   return {
     snapshot: result.snapshot,
-    strategy: result.strategy,
+    reviewPlan: result.reviewPlan,
+    contextInsight: result.contextInsight,
+    strategy: result.reviewPlan.strategy,
     securityFindings: result.securityFindings,
     fileSummaries: result.fileSummaries,
     riskFindings: result.riskFindings,
     testFindings: result.testFindings,
     brief: result.brief,
+    critique: result.critique,
     githubPayload: result.githubPayload,
     slackPayload: result.slackPayload,
     discordPayload: result.discordPayload

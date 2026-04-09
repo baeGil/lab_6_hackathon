@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { chunkFiles, filterRelevantFiles, maskSensitiveTokens } from "./utils";
+import { chunkFiles, classifyPullRequest, deriveEventMode, filterRelevantFiles, maskSensitiveTokens } from "./utils";
 
 describe("ai-core utils", () => {
   it("filters noisy files", () => {
@@ -58,5 +58,40 @@ describe("ai-core utils", () => {
       }
     );
     expect(chunks.length).toBe(3);
+  });
+
+  it("classifies PR type and event mode", () => {
+    const files = [
+      {
+        path: "src/auth/session.ts",
+        patch: '+if (!token) throw new Error("missing token")',
+        additions: 4,
+        deletions: 1
+      }
+    ];
+
+    expect(
+      classifyPullRequest(
+        {
+          repoId: "1",
+          repoName: "demo/repo",
+          prNumber: 10,
+          title: "Harden auth token validation",
+          author: "alice",
+          url: "https://github.com/demo/repo/pull/10",
+          baseBranch: "main",
+          headBranch: "feature/auth",
+          eventType: "synchronize",
+          labels: ["security"],
+          reviewers: [],
+          files,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        },
+        files
+      )
+    ).toBe("security-sensitive");
+    expect(deriveEventMode("synchronize")).toBe("full-review");
+    expect(deriveEventMode("merged")).toBe("closeout");
   });
 });

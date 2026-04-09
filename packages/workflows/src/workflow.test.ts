@@ -50,6 +50,8 @@ describe("workflow", () => {
     expect(result.deduped).toBe(false);
     if ("analysis" in result && result.analysis) {
       expect(result.analysis.brief.attentionLevel).toBe("high");
+      expect(result.analysis.reviewPlan.prType).toBe("security-sensitive");
+      expect(result.analysis.critique.reviewerPosture).toBe("senior-review");
     }
     expect(github.comments).toHaveLength(1);
     expect(slack.messages).toHaveLength(1);

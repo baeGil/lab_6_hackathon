@@ -1,8 +1,12 @@
 import type {
   AnalysisStrategy,
+  EventReviewMode,
   PullRequestFile,
+  PullRequestSnapshot,
+  PullRequestType,
   RepoConfig,
   RepoMemory,
+  ReviewPlan,
   SecurityFinding
 } from "../../shared/src/index";
 
@@ -73,6 +77,72 @@ export function chooseStrategy(files: PullRequestFile[], config: RepoConfig): An
     return "normal";
   }
   return "shallow";
+}
+
+export function classifyPullRequest(snapshot: PullRequestSnapshot, files: PullRequestFile[]): PullRequestType {
+  const normalized = [
+    snapshot.title,
+    snapshot.body ?? "",
+    ...snapshot.labels,
+    ...files.map((file) => file.path),
+    ...files.map((file) => file.patch.slice(0, 500))
+  ]
+    .join("\n")
+    .toLowerCase();
+
+  if (files.length > 0 && files.every((file) => /\.(md|mdx|txt|rst)$/i.test(file.path))) return "docs-only";
+  if (files.length > 0 && files.every((file) => /test|spec/i.test(file.path))) return "test-only";
+  if (/dependabot|renovate|bump|upgrade dependency|package\.json|pnpm-lock|yarn\.lock/.test(normalized)) {
+    return "dependency";
+  }
+  if (/migration|schema|db\/migrate|alter table/.test(normalized)) return "migration";
+  if (/auth|permission|token|secret|session|role|billing/.test(normalized)) return "security-sensitive";
+  if (/deploy|docker|terraform|helm|k8s|workflow|infra/.test(normalized)) return "infra";
+  if (/config|env|feature flag|settings/.test(normalized)) return "config";
+  if (/refactor|cleanup|rename|restructure/.test(normalized)) return "refactor";
+  if (/fix|bug|hotfix|regression|guard/.test(normalized)) return "bugfix";
+  if (/feat|feature|add|introduce|implement/.test(normalized)) return "feature";
+  return "mixed";
+}
+
+export function deriveEventMode(eventType: PullRequestSnapshot["eventType"]): EventReviewMode {
+  if (["opened", "reopened", "ready_for_review", "synchronize"].includes(eventType)) {
+    return "full-review";
+  }
+  if (["closed", "merged"].includes(eventType)) {
+    return "closeout";
+  }
+  return "state-refresh";
+}
+
+export function deriveFocusAreas(files: PullRequestFile[], memory: RepoMemory) {
+  return rankImportantFiles(files, memory)
+    .map((path) => path.split("/")[0] ?? path)
+    .filter((value, index, list) => Boolean(value) && list.indexOf(value) === index)
+    .slice(0, 5);
+}
+
+export function mergeStrategies(left: AnalysisStrategy, right: AnalysisStrategy): AnalysisStrategy {
+  const rank: Record<AnalysisStrategy, number> = {
+    shallow: 0,
+    normal: 1,
+    deep: 2,
+    partial: 3
+  };
+  return rank[left] >= rank[right] ? left : right;
+}
+
+export function selectFilesForPlan(files: PullRequestFile[], plan: ReviewPlan, config: RepoConfig) {
+  if (plan.strategy === "partial") {
+    return files.slice(0, config.maxFilesPerAnalysis);
+  }
+  if (plan.eventMode === "closeout") {
+    return files.slice(0, Math.min(5, files.length));
+  }
+  if (plan.eventMode === "state-refresh") {
+    return files.slice(0, Math.min(8, files.length));
+  }
+  return files;
 }
 
 export function chunkFiles(files: PullRequestFile[], config: RepoConfig) {

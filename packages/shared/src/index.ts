@@ -13,6 +13,20 @@ export type GitHubEventType =
 export type AttentionLevel = "low" | "medium" | "high";
 export type AnalysisStrategy = "shallow" | "normal" | "deep" | "partial";
 export type DeliveryChannel = "github" | "slack" | "discord";
+export type PullRequestType =
+  | "feature"
+  | "bugfix"
+  | "refactor"
+  | "infra"
+  | "config"
+  | "migration"
+  | "security-sensitive"
+  | "dependency"
+  | "docs-only"
+  | "test-only"
+  | "mixed";
+export type EventReviewMode = "full-review" | "state-refresh" | "closeout";
+export type ReviewerPosture = "monitor" | "careful-review" | "senior-review";
 
 export interface PullRequestFile {
   path: string;
@@ -69,7 +83,7 @@ export interface WebhookEvent {
 
 export interface SecurityFinding {
   path: string;
-  kind: "masked-secret" | "sensitive-module" | "config-risk";
+  kind: "masked-secret" | "sensitive-module" | "config-risk" | "auth-risk" | "dependency-risk";
   detail: string;
 }
 
@@ -78,23 +92,52 @@ export interface FileSummary {
   summary: string;
   businessIntent: string;
   reviewerFocus: string;
+  changeType?: "logic" | "api" | "config" | "data" | "test" | "docs";
 }
 
 export interface RiskFinding {
   path: string;
   severity: AttentionLevel;
-  category: "logic" | "security" | "performance" | "breaking-change" | "configuration";
+  category: "logic" | "security" | "performance" | "breaking-change" | "configuration" | "concurrency";
   summary: string;
+  reviewerAction?: string;
 }
 
 export interface TestFinding {
   path: string;
   recommendation: string;
   testType: "unit" | "integration" | "manual" | "regression";
+  priority?: AttentionLevel;
+}
+
+export interface ReviewPlan {
+  prType: PullRequestType;
+  eventMode: EventReviewMode;
+  strategy: AnalysisStrategy;
+  requiresExtraContext: boolean;
+  focusAreas: string[];
+  reasoning: string;
+  shouldNotify: boolean;
+}
+
+export interface ContextInsight {
+  summary: string;
+  relatedModules: string[];
+  keyQuestions: string[];
+  missingContext: string[];
+}
+
+export interface CritiqueReport {
+  confidence: number;
+  reviewerPosture: ReviewerPosture;
+  missingContext: string[];
+  escalationNote: string | null;
+  publishToChannels: boolean;
 }
 
 export interface CanonicalBrief {
   title: string;
+  eventSummary: string;
   whatChanged: string[];
   whyItMatters: string[];
   reviewerFocus: string[];
@@ -103,6 +146,9 @@ export interface CanonicalBrief {
   confidence: number;
   missingContext: string[];
   importantFiles: string[];
+  reviewerPosture: ReviewerPosture;
+  escalationNote: string | null;
+  nextActions: string[];
   disclaimer: string;
 }
 
@@ -117,12 +163,15 @@ export interface NotificationPayload {
 
 export interface AnalysisResult {
   snapshot: PullRequestSnapshot;
+  reviewPlan: ReviewPlan;
+  contextInsight: ContextInsight;
   strategy: AnalysisStrategy;
   securityFindings: SecurityFinding[];
   fileSummaries: FileSummary[];
   riskFindings: RiskFinding[];
   testFindings: TestFinding[];
   brief: CanonicalBrief;
+  critique: CritiqueReport;
   githubPayload: NotificationPayload;
   slackPayload: NotificationPayload | null;
   discordPayload: NotificationPayload | null;
