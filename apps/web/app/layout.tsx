@@ -29,26 +29,7 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
               <h1 style={styles.brand}>PR Intelligence</h1>
               <p style={styles.copy}>GitHub App + LangGraphJS + realtime delivery for review triage.</p>
             </div>
-            <div style={styles.sessionBox}>
-              {session ? (
-                <>
-                  <div style={styles.sessionLabel}>Signed in with GitHub</div>
-                  <div style={styles.sessionName}>{session.name ?? session.login}</div>
-                  <div style={styles.sessionSubtle}>@{session.login}</div>
-                  <a href="/api/auth/logout" style={{ ...styles.navItem, marginTop: 12, display: "inline-block" }}>
-                    Log Out
-                  </a>
-                </>
-              ) : (
-                <>
-                  <div style={styles.sessionLabel}>Authentication</div>
-                  <div style={styles.sessionSubtle}>Connect GitHub before configuring live integrations.</div>
-                  <a href="/api/auth/github/login" style={{ ...styles.navItem, display: "inline-block", marginTop: 12 }}>
-                    Sign In With GitHub
-                  </a>
-                </>
-              )}
-            </div>
+
             <nav style={styles.nav}>
               {navItems.map((item) => (
                 <a key={item.href} href={item.href} style={styles.navItem}>

@@ -90,9 +90,6 @@ export function IntegrationsConsole() {
       <section style={panelStyle}>
         <h3 style={{ marginTop: 0 }}>Runtime Status</h3>
         <div style={statusGridStyle}>
-          <StatusPill ok={Boolean(status?.githubAppConfigured)} label="GitHub App" />
-          <StatusPill ok={Boolean(status?.githubOAuthConfigured)} label="GitHub OAuth" />
-          <StatusPill ok={Boolean(status?.githubWebhookSecretConfigured)} label="Webhook Secret" />
           <StatusPill ok={Boolean(status?.groqConfigured)} label="Groq" />
           <StatusPill ok={Boolean(status?.slackConfigured)} label="Slack" />
           <StatusPill ok={Boolean(status?.discordConfigured)} label="Discord" />
@@ -103,13 +100,10 @@ export function IntegrationsConsole() {
         <section style={panelStyle}>
           <h3 style={{ marginTop: 0 }}>System Managed Credentials</h3>
           <p style={{ marginTop: 0, color: "#5f5449", lineHeight: 1.6 }}>
-            GitHub OAuth, GitHub App, webhook verification, and Groq are system-level credentials. They must live in
-            <code> .env </code> and are not editable by workspace users here.
+            The Groq provider is a system-level credential. It must live in
+            <code> .env </code> and is not editable by workspace users here.
           </p>
           <div style={{ display: "grid", gap: 10, color: "#3f382f" }}>
-            <div>GitHub OAuth: {status?.githubOAuthConfigured ? "configured" : "missing in .env"}</div>
-            <div>GitHub App: {status?.githubAppConfigured ? "configured" : "missing in .env"}</div>
-            <div>Webhook secret: {status?.githubWebhookSecretConfigured ? "configured" : "optional / missing"}</div>
             <div>Groq provider: {status?.groqConfigured ? "configured" : "missing in .env"}</div>
             <div>GitHub API URL: {status?.githubApiUrl ?? "https://api.github.com"}</div>
             <div>AI mode: {status?.aiProviderMode ?? "heuristic"}</div>
