@@ -79,17 +79,19 @@ function renderPayload(
 ): NotificationPayload {
   return {
     channel,
-    heading: `${snapshot.repoName} PR #${snapshot.prNumber}`,
+    heading: `${snapshot.repoName} PR #${snapshot.prNumber}: ${brief.title}`,
     summary: [
-      ...brief.whatChanged.slice(0, 2),
-      `Attention: ${brief.attentionLevel}`,
-      `Confidence: ${brief.confidence}`
+      ...brief.whatChanged.map(item => `📦 ${item}`),
+      ...brief.whyItMatters.map(item => `🎯 ${item}`),
+      ...brief.reviewerFocus.map(item => `🔍 ${item}`),
+      `⚠️ Attention: ${brief.attentionLevel.toUpperCase()}`,
+      `✅ Confidence: ${brief.confidence * 100}%`
     ],
     attentionLevel: brief.attentionLevel,
     confidence: brief.confidence,
     links: [
       { label: "Open PR", url: snapshot.url },
-      { label: "Open Head Branch", url: `${snapshot.url}/files` }
+      { label: "View Files", url: `${snapshot.url}/files` }
     ]
   };
 }

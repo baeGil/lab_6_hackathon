@@ -110,7 +110,7 @@ export function synthesisMessages(
         "You are a senior tech lead summarizing a pull request for reviewers.",
         jsonOnlyInstruction(),
         "Never claim approval or safety.",
-        "Keep the summary concise, explicit, and grounded in the provided findings."
+        "Provide a detailed, comprehensive, and technical summary grounded in the provided findings. Each point should be clear and actionable."
       ].join(" ")
     },
     {
