@@ -68,6 +68,46 @@ async function githubRequest<T>(
   return (await response.json()) as T;
 }
 
+async function githubRequestRaw(
+  path: string,
+  init: RequestInit,
+  token: string,
+  apiUrl = process.env.GITHUB_API_URL ?? "https://api.github.com"
+): Promise<string> {
+  const response = await fetch(`${apiUrl}${path}`, {
+    ...init,
+    headers: {
+      Accept: "application/vnd.github.v3.raw",
+      Authorization: `Bearer ${token}`,
+      "X-GitHub-Api-Version": "2022-11-28",
+      ...(init.headers ?? {})
+    }
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`GitHub API Raw ${path} failed: ${response.status} ${text}`);
+  }
+
+  return response.text();
+}
+
+async function fetchFileContentRaw(
+  owner: string,
+  repo: string,
+  path: string,
+  ref: string,
+  token: string,
+  apiUrl?: string
+) {
+  try {
+    return await githubRequestRaw(`/repos/${owner}/${repo}/contents/${path}?ref=${ref}`, { method: "GET" }, token, apiUrl);
+  } catch (err) {
+    console.warn(`Failed to fetch raw content for ${path} at ${ref}:`, err);
+    return "";
+  }
+}
+
 async function getInstallationToken(installationId: number) {
   return getInstallationTokenWithCredentials(installationId, {});
 }
@@ -336,8 +376,11 @@ export async function buildWebhookEventFromGitHubPayload(
   const owner = body.repository?.owner?.login ?? body.repository?.owner?.name;
   const repo = body.repository?.name;
   const prNumber = body.pull_request?.number;
-  if (!owner || !repo || !prNumber) {
-    throw new Error("GitHub webhook payload is missing repository owner/name or pull request number.");
+  const baseSha = body.pull_request?.base?.sha;
+  const headSha = body.pull_request?.head?.sha;
+
+  if (!owner || !repo || !prNumber || !baseSha || !headSha) {
+    throw new Error("GitHub webhook payload is missing repository owner/name, pull request number, or base/head SHAs.");
   }
 
   const files = await githubRequest<Array<{ filename: string; patch?: string; additions: number; deletions: number }>>(
@@ -347,14 +390,25 @@ export async function buildWebhookEventFromGitHubPayload(
     apiUrl
   );
 
-  const mappedFiles: PullRequestFile[] = files
-    .filter((file) => Boolean(file.patch))
-    .map((file) => ({
-      path: file.filename,
-      patch: file.patch ?? "",
-      additions: file.additions,
-      deletions: file.deletions
-    }));
+  const mappedFiles: PullRequestFile[] = await Promise.all(
+    files
+      .filter((file) => Boolean(file.patch))
+      .map(async (file) => {
+        const [fullContentBase, fullContentHead] = await Promise.all([
+          fetchFileContentRaw(owner, repo, file.filename, baseSha, token, apiUrl),
+          fetchFileContentRaw(owner, repo, file.filename, headSha, token, apiUrl)
+        ]);
+
+        return {
+          path: file.filename,
+          patch: file.patch ?? "",
+          additions: file.additions,
+          deletions: file.deletions,
+          fullContentBase,
+          fullContentHead
+        };
+      })
+  );
 
   return {
     deliveryId,

@@ -90,7 +90,7 @@ export class HeuristicAiProvider implements AiProvider {
       context.files.length > 10 ? ["Large PR: some lower-priority files were summarized more coarsely."] : [];
     const confidenceBase = Math.max(0.45, 0.92 - context.files.length * 0.03 - missingContext.length * 0.08);
 
-    return {
+    const result = {
       title: `${context.snapshot.repoName} PR #${context.snapshot.prNumber}: ${context.snapshot.title}`,
       whatChanged: fileSummaries.slice(0, 5).map((item) => `${item.path}: ${item.summary}`),
       whyItMatters: fileSummaries.slice(0, 3).map((item) => item.businessIntent),
@@ -102,5 +102,11 @@ export class HeuristicAiProvider implements AiProvider {
       importantFiles: context.importantFiles,
       disclaimer: "AI-generated summary. Use it to triage the review, not to replace human code review."
     };
+
+    console.log("\n--- AI OUTPUT (HEURISTIC) ---");
+    console.log(JSON.stringify(result, null, 2));
+    console.log("-----------------------------\n");
+
+    return result;
   }
 }

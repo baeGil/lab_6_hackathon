@@ -31,7 +31,12 @@ export function fileSummaryMessages(context: AnalysisContext): AgentMessage[] {
         schema: [{ path: "string", summary: "string", businessIntent: "string", reviewerFocus: "string" }],
         repo: context.snapshot.repoName,
         prTitle: context.snapshot.title,
-        files: context.files.map((file) => ({ path: file.path, patch: file.patch }))
+        files: context.files.map((file) => ({
+          path: file.path,
+          patch: file.patch,
+          originalCode: file.fullContentBase,
+          updatedCode: file.fullContentHead
+        }))
       })
     }
   ];

@@ -83,6 +83,13 @@ export class GroqAiProvider implements AiProvider {
         throw new Error("Groq response did not include message content.");
       }
       const cleaned = content.replace(/^```json\s*/i, "").replace(/```$/i, "").trim();
+      
+      console.log("\n--- AI INPUT (GROQ) ---");
+      console.log(JSON.stringify(messages, null, 2));
+      console.log("\n--- AI OUTPUT (GROQ) ---");
+      console.log(content);
+      console.log("------------------------\n");
+
       return JSON.parse(cleaned) as T;
     } catch {
       return fallback();

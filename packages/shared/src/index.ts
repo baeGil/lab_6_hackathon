@@ -20,6 +20,8 @@ export interface PullRequestFile {
   additions: number;
   deletions: number;
   language?: string;
+  fullContentBase?: string;
+  fullContentHead?: string;
 }
 
 export interface PullRequestSnapshot {
