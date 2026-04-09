@@ -43,7 +43,7 @@ export function LiveDemoConsole() {
         owner: form.owner,
         repo: form.repo,
         pullNumber: Number(form.pullNumber),
-        installationId: Number(form.installationId)
+        ...(form.installationId ? { installationId: Number(form.installationId) } : {})
       })
     });
     setResult((await response.json()) as DemoResponse);
@@ -67,7 +67,7 @@ export function LiveDemoConsole() {
           <Field label="GitHub Owner" value={form.owner} onChange={(value) => setForm({ ...form, owner: value })} />
           <Field label="Repository Name" value={form.repo} onChange={(value) => setForm({ ...form, repo: value })} />
           <Field label="Pull Request Number" value={form.pullNumber} onChange={(value) => setForm({ ...form, pullNumber: value })} />
-          <Field label="Installation ID" value={form.installationId} onChange={(value) => setForm({ ...form, installationId: value })} />
+          <Field label="Installation ID (Optional if PAT set)" value={form.installationId} onChange={(value) => setForm({ ...form, installationId: value })} />
           <button type="submit" style={buttonStyle} disabled={loading}>
             {loading ? "Running..." : "Analyze Real PR"}
           </button>

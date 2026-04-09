@@ -6,6 +6,7 @@ export interface GitHubRuntimeCredentials {
   githubAppId?: string;
   githubAppPrivateKey?: string;
   githubApiUrl?: string;
+  githubPat?: string;
 }
 
 export interface GitHubAdapter {
@@ -72,9 +73,18 @@ async function getInstallationToken(installationId: number) {
 }
 
 async function getInstallationTokenWithCredentials(
-  installationId: number,
+  installationId: number | undefined,
   credentials: GitHubRuntimeCredentials
 ) {
+  const pat = credentials.githubPat ?? process.env.GITHUB_PAT;
+  if (pat) {
+    return pat;
+  }
+
+  if (!installationId) {
+    throw new Error("Missing installationId and GITHUB_PAT. One is required for GitHub authentication.");
+  }
+
   const appId = credentials.githubAppId ?? process.env.GITHUB_APP_ID;
   const privateKey = credentials.githubAppPrivateKey ?? process.env.GITHUB_APP_PRIVATE_KEY?.replace(/\\n/g, "\n");
   const apiUrl = credentials.githubApiUrl ?? process.env.GITHUB_API_URL ?? "https://api.github.com";
@@ -162,13 +172,15 @@ export class RealGitHubAdapter implements GitHubAdapter {
 
   async upsertCanonicalComment(result: AnalysisResult): Promise<DeliveryRecord> {
     const installationId = result.snapshot.installationId;
-    if (!installationId) {
+    const hasPat = Boolean(this.credentials.githubPat ?? process.env.GITHUB_PAT);
+
+    if (!installationId && !hasPat) {
       return {
         channel: "github",
         status: "failed",
         target: result.snapshot.url,
         timestamp: new Date().toISOString(),
-        message: "Missing installationId for GitHub live comment delivery."
+        message: "Missing installationId and GITHUB_PAT for GitHub live comment delivery."
       };
     }
     const token = await getInstallationTokenWithCredentials(installationId, this.credentials);
@@ -218,13 +230,15 @@ export class RealGitHubAdapter implements GitHubAdapter {
   async upsertCheckRun(result: AnalysisResult): Promise<DeliveryRecord> {
     const installationId = result.snapshot.installationId;
     const headSha = result.snapshot.headSha;
-    if (!installationId || !headSha) {
+    const hasPat = Boolean(this.credentials.githubPat ?? process.env.GITHUB_PAT);
+
+    if ((!installationId && !hasPat) || !headSha) {
       return {
         channel: "github",
         status: "failed",
         target: `${result.snapshot.url}/checks`,
         timestamp: new Date().toISOString(),
-        message: "Missing installationId or headSha for GitHub live check run."
+        message: "Missing installationId/PAT or headSha for GitHub live check run."
       };
     }
     const token = await getInstallationTokenWithCredentials(installationId, this.credentials);
@@ -313,8 +327,9 @@ export async function buildWebhookEventFromGitHubPayload(
   credentials: GitHubRuntimeCredentials = {}
 ): Promise<WebhookEvent> {
   const installationId = body.installation?.id;
-  if (!installationId) {
-    throw new Error("GitHub webhook payload is missing installation.id.");
+  const pat = credentials.githubPat ?? process.env.GITHUB_PAT;
+  if (!installationId && !pat) {
+    throw new Error("GitHub webhook payload is missing installation.id and no GITHUB_PAT configured.");
   }
   const token = await getInstallationTokenWithCredentials(installationId, credentials);
   const apiUrl = credentials.githubApiUrl ?? process.env.GITHUB_API_URL ?? "https://api.github.com";
