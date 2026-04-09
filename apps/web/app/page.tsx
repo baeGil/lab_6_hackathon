@@ -35,8 +35,8 @@ export default async function HomePage() {
           <div style={styles.pill}>AI-Agent-First PR Review</div>
           <h2 style={styles.heroTitle}>Realtime PR intelligence for private beta repos</h2>
           <p style={styles.heroCopy}>
-            This scaffold ships the core workflow: GitHub webhook intake, LangGraph analysis, canonical GitHub
-            outputs, Slack/Discord delivery, analytics and replayable tests.
+            Team leads sign in, install the GitHub App on their repositories, map each repository to Slack or Discord,
+            and let the agent pipeline handle every pull request in realtime.
           </p>
         </div>
       </section>

@@ -14,7 +14,7 @@ export async function POST() {
   const store = getStore();
   const accessToken = store.getUserAccessToken(session.userId);
   if (!accessToken) {
-    return NextResponse.json({ error: "Missing GitHub account token. Please sign in again." }, { status: 400 });
+    return NextResponse.json({ error: "Missing GitHub account token. Sign in with GitHub again." }, { status: 400 });
   }
 
   try {

@@ -13,6 +13,6 @@ export async function GET() {
   const store = getStore();
   return NextResponse.json({
     repositories: store.listTrackedRepositoriesForUser(session.userId),
-    status: store.getCredentialsStatus()
+    status: store.getCredentialsStatusForUser(session.userId)
   });
 }

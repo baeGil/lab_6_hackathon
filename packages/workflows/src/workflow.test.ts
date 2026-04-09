@@ -45,6 +45,7 @@ describe("workflow", () => {
         ownerLogin: "alice"
       }
     ]);
+    store.setRepositoryTracking("github:1", "repo-1", true);
     store.saveRepoIntegration("github:1", "repo-1", {
       slackWebhookUrl: "https://hooks.slack.test/one",
       discordWebhookUrl: "https://discord.test/one"
@@ -82,6 +83,7 @@ describe("workflow", () => {
         ownerLogin: "alice"
       }
     ]);
+    store.setRepositoryTracking("github:1", "repo-1", true);
     store.saveRepoIntegration("github:1", "repo-1", {
       slackWebhookUrl: "https://hooks.slack.test/one",
       discordWebhookUrl: "https://discord.test/one"

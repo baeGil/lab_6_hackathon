@@ -133,15 +133,26 @@ export function IntegrationsConsole() {
       <section style={panelStyle}>
         <h3 style={{ marginTop: 0 }}>System Managed Credentials</h3>
         <p style={{ marginTop: 0, color: "#5f5449", lineHeight: 1.6 }}>
-          GitHub OAuth, GitHub App, webhook verification, and Groq stay on the server. Workspace users only configure
-          per-repository delivery webhooks here.
+          GitHub OAuth, the GitHub App, webhook verification, and Groq stay on the server. Team leads only need to
+          sign in with GitHub, install the app on their repositories, then map each repository to the correct channel.
         </p>
         <div style={statusGridStyle}>
-          <StatusPill ok={Boolean(status?.githubAppConfigured)} label="GitHub App" />
           <StatusPill ok={Boolean(status?.githubOAuthConfigured)} label="GitHub OAuth" />
+          <StatusPill ok={Boolean(status?.githubUserTokenConfigured)} label="GitHub Login" />
+          <StatusPill ok={Boolean(status?.githubAppConfigured)} label="GitHub App" />
           <StatusPill ok={Boolean(status?.githubWebhookSecretConfigured)} label="Webhook Secret" />
           <StatusPill ok={Boolean(status?.groqConfigured)} label="Groq" />
         </div>
+        {status?.githubAppInstallUrl ? (
+          <div style={ctaRowStyle}>
+            <a href={status.githubAppInstallUrl} target="_blank" rel="noreferrer" style={buttonStyle}>
+              Install GitHub App On A Repo
+            </a>
+            <a href="/repositories" style={secondaryButtonStyle}>
+              Sync Repositories
+            </a>
+          </div>
+        ) : null}
       </section>
 
       <section style={panelStyle}>
@@ -155,7 +166,8 @@ export function IntegrationsConsole() {
 
         {repositories.length === 0 ? (
           <div style={emptyStyle}>
-            No repositories are available yet. Install the GitHub App, then go to <a href="/repositories">Repositories</a> and sync first.
+            No repositories are available yet. Install the GitHub App on a repository you own, then go to{" "}
+            <a href="/repositories">Repositories</a> and sync first.
           </div>
         ) : (
           <div style={repoListStyle}>
@@ -173,12 +185,13 @@ export function IntegrationsConsole() {
                   }}
                 >
                   <div style={{ display: "grid", gap: 6 }}>
-                    <div style={repoTitleStyle}>{repository.repoName}</div>
-                    <div style={{ color: "#5f5449" }}>
-                      Installation #{repository.installationId} · owner @{repository.ownerLogin}
-                    </div>
+                  <div style={repoTitleStyle}>{repository.repoName}</div>
+                    <div style={{ color: "#5f5449" }}>owner @{repository.ownerLogin}</div>
                   </div>
                   <div style={badgeRowStyle}>
+                    <StatusPill ok={repository.enabled} label="Monitoring" />
+                    <StatusPill ok={Boolean(repository.installationId)} label="App Installed" />
+                    <StatusPill ok={repository.webhookConfigured} label="Realtime Ready" />
                     <StatusPill ok={repository.slackConfigured} label="Slack" />
                     <StatusPill ok={repository.discordConfigured} label="Discord" />
                   </div>
@@ -269,6 +282,25 @@ const statusGridStyle: CSSProperties = {
   display: "flex",
   flexWrap: "wrap",
   gap: 12
+};
+
+const ctaRowStyle: CSSProperties = {
+  display: "flex",
+  gap: 12,
+  flexWrap: "wrap"
+};
+
+const secondaryButtonStyle: CSSProperties = {
+  borderRadius: 14,
+  padding: "12px 18px",
+  font: "inherit",
+  fontWeight: 700,
+  color: "#1d1b16",
+  background: "rgba(255,255,255,0.92)",
+  border: "1px solid rgba(29,27,22,0.12)",
+  cursor: "pointer",
+  textDecoration: "none",
+  display: "inline-block"
 };
 
 const repoListStyle: CSSProperties = {

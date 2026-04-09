@@ -25,10 +25,11 @@ interface StoredUser {
 interface StoredTrackedRepository {
   repoId: string;
   repoName: string;
-  installationId: number;
+  installationId?: number;
   ownerLogin: string;
   ownerUserId: string;
   enabled: boolean;
+  webhookConfigured: boolean;
 }
 
 interface StoredRepoIntegration {
@@ -78,7 +79,8 @@ function withIntegrationStatus(
   return {
     ...repository,
     slackConfigured: Boolean(decryptSecret(integration?.slackWebhookUrl)),
-    discordConfigured: Boolean(decryptSecret(integration?.discordWebhookUrl))
+    discordConfigured: Boolean(decryptSecret(integration?.discordWebhookUrl)),
+    webhookConfigured: repository.webhookConfigured
   };
 }
 
@@ -146,7 +148,7 @@ export class MemoryStore {
     repositories: Array<{
       repoId: string;
       repoName: string;
-      installationId: number;
+      installationId?: number;
       ownerLogin: string;
     }>
   ) {
@@ -169,7 +171,8 @@ export class MemoryStore {
         installationId: repository.installationId,
         ownerLogin: repository.ownerLogin,
         ownerUserId,
-        enabled: existing?.enabled ?? true
+        enabled: existing?.enabled ?? false,
+        webhookConfigured: existing?.webhookConfigured ?? Boolean(repository.installationId)
       });
     }
 
@@ -201,6 +204,32 @@ export class MemoryStore {
 
   isRepoTracked(repoId: string) {
     return Array.from(this.trackedRepositories.values()).some((repository) => repository.repoId === repoId && repository.enabled);
+  }
+
+  setRepositoryTracking(ownerUserId: string, repoId: string, enabled: boolean) {
+    const key = repoOwnerKey(ownerUserId, repoId);
+    const current = this.trackedRepositories.get(key);
+    if (!current) {
+      throw new Error("Repository is not available for this user.");
+    }
+    this.trackedRepositories.set(key, {
+      ...current,
+      enabled
+    });
+    return this.getTrackedRepositoryForUser(ownerUserId, repoId)!;
+  }
+
+  setRepositoryWebhookConfigured(ownerUserId: string, repoId: string, configured: boolean) {
+    const key = repoOwnerKey(ownerUserId, repoId);
+    const current = this.trackedRepositories.get(key);
+    if (!current) {
+      throw new Error("Repository is not available for this user.");
+    }
+    this.trackedRepositories.set(key, {
+      ...current,
+      webhookConfigured: configured
+    });
+    return this.getTrackedRepositoryForUser(ownerUserId, repoId)!;
   }
 
   saveRepoIntegration(ownerUserId: string, repoId: string, input: RepoIntegrationInput) {
@@ -285,10 +314,19 @@ export class MemoryStore {
       githubOAuthConfigured: Boolean(process.env.GITHUB_CLIENT_ID && process.env.GITHUB_CLIENT_SECRET),
       githubWebhookSecretConfigured: Boolean(process.env.GITHUB_WEBHOOK_SECRET),
       groqConfigured: Boolean(process.env.GROQ_API_KEY),
+      githubUserTokenConfigured: false,
       githubApiUrl: process.env.GITHUB_API_URL ?? "https://api.github.com",
       groqModelId: process.env.GROQ_MODEL_ID ?? "llama-3.3-70b-versatile",
       aiProviderMode: (process.env.AI_PROVIDER_MODE as "heuristic" | "groq") ?? "heuristic",
       githubAppInstallUrl: toInstallUrl()
+    };
+  }
+
+  getCredentialsStatusForUser(userId?: string): IntegrationCredentialsStatus {
+    const status = this.getCredentialsStatus();
+    return {
+      ...status,
+      githubUserTokenConfigured: userId ? Boolean(this.getUserAccessToken(userId)) : false
     };
   }
 

@@ -42,7 +42,25 @@ export function RepositoriesConsole() {
         return;
       }
       setRepositories(data.repositories ?? []);
-      setMessage("GitHub installations synced. Repositories are now ready for per-repo integrations.");
+      setMessage("GitHub repositories synced from your installations. Choose which ones should be monitored in realtime.");
+      await load();
+    });
+  }
+
+  async function toggleTracking(repoId: string, enabled: boolean) {
+    setMessage("");
+    startTransition(async () => {
+      const response = await fetch(`/api/repositories/${repoId}/tracking`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled })
+      });
+      const data = (await response.json()) as { error?: string };
+      if (!response.ok) {
+        setMessage(data.error ?? "Failed to update monitoring for this repository.");
+        return;
+      }
+      setMessage(enabled ? "Repository monitoring enabled." : "Repository monitoring disabled.");
       await load();
     });
   }
@@ -51,10 +69,10 @@ export function RepositoriesConsole() {
     <div style={{ display: "grid", gap: 24 }}>
       <section style={heroStyle}>
         <div style={eyebrowStyle}>Repo Onboarding</div>
-        <h2 style={{ margin: "10px 0", fontSize: 34 }}>Sync the repositories your GitHub App can actually monitor</h2>
+        <h2 style={{ margin: "10px 0", fontSize: 34 }}>Install the GitHub App, sync your accessible repos, then decide which ones should notify the team</h2>
         <p style={{ margin: 0, maxWidth: 760, lineHeight: 1.6 }}>
-          Team leads sign in once, install the GitHub App on their repos, then sync here. The app only shows
-          repositories available through that user&apos;s installations.
+          Team leads sign in once, install the GitHub App on the repositories they own, sync from GitHub, then enable
+          monitoring only on the repos they want the agent pipeline to watch.
         </p>
       </section>
 
@@ -63,7 +81,7 @@ export function RepositoriesConsole() {
           <div>
             <h3 style={{ margin: 0 }}>Tracked Repositories</h3>
             <p style={{ margin: "6px 0 0", color: "#5f5449" }}>
-              Sync after installing the GitHub App or after adding the app to more repositories.
+              Sync after installing the GitHub App on more repositories or after gaining admin access to another installation.
             </p>
           </div>
           <div style={toolbarActionsStyle}>
@@ -82,7 +100,7 @@ export function RepositoriesConsole() {
 
         {repositories.length === 0 ? (
           <div style={emptyStyle}>
-            No repositories synced yet. Install the GitHub App on a repo, then come back here and run sync.
+            No repositories synced yet. Install the GitHub App on one of your repositories, then come back here and run sync.
           </div>
         ) : (
           <div style={repoGridStyle}>
@@ -90,16 +108,27 @@ export function RepositoriesConsole() {
               <article key={`${repository.ownerUserId}-${repository.repoId}`} style={repoCardStyle}>
                 <div style={{ display: "grid", gap: 8 }}>
                   <div style={repoNameStyle}>{repository.repoName}</div>
-                  <div style={metaStyle}>Installation #{repository.installationId} · owner @{repository.ownerLogin}</div>
+                  <div style={metaStyle}>owner @{repository.ownerLogin}</div>
                 </div>
                 <div style={badgeRowStyle}>
-                  <StatusBadge ok={repository.enabled} label="tracked" />
+                  <StatusBadge ok={repository.enabled} label="monitoring" />
+                  <StatusBadge ok={Boolean(repository.installationId)} label="app installed" />
+                  <StatusBadge ok={repository.webhookConfigured} label="realtime ready" />
                   <StatusBadge ok={repository.slackConfigured} label="slack" />
                   <StatusBadge ok={repository.discordConfigured} label="discord" />
                 </div>
-                <a href={`/integrations?repoId=${repository.repoId}`} style={secondaryButtonStyle}>
-                  {repository.slackConfigured || repository.discordConfigured ? "Manage" : "Add Integration"}
-                </a>
+                <div style={toolbarActionsStyle}>
+                  <button
+                    type="button"
+                    onClick={() => toggleTracking(repository.repoId, !repository.enabled)}
+                    style={secondaryButtonStyle}
+                  >
+                    {repository.enabled ? "Stop Monitoring" : "Enable Monitoring"}
+                  </button>
+                  <a href={`/integrations?repoId=${repository.repoId}`} style={secondaryButtonStyle}>
+                    {repository.slackConfigured || repository.discordConfigured ? "Manage Channels" : "Add Channels"}
+                  </a>
+                </div>
               </article>
             ))}
           </div>

@@ -14,9 +14,20 @@ export async function POST(request: Request) {
   const rawBody = await request.text();
   const payload = JSON.parse(rawBody);
   const isInternalPayload = Boolean(payload?.snapshot && payload?.deliveryId);
+  const repoIdFromPayload = payload?.repository?.id ? String(payload.repository.id) : payload?.snapshot?.repoId;
 
   let event = payload;
   if (!isInternalPayload) {
+    if (repoIdFromPayload && !store.isRepoTracked(repoIdFromPayload)) {
+      return NextResponse.json(
+        {
+          skipped: true,
+          reason: "Repository is not enabled by any signed-in user."
+        },
+        { status: 202 }
+      );
+    }
+
     const configuredSecret = process.env.GITHUB_WEBHOOK_SECRET;
     if (configuredSecret) {
       const signature = request.headers.get("x-hub-signature-256");

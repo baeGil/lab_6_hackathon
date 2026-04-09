@@ -17,7 +17,10 @@ export function createProvider(): AiProvider {
   return new HeuristicAiProvider();
 }
 
-export function createGitHubAdapter(): GitHubAdapter {
+export function createGitHubAdapter(githubToken?: string): GitHubAdapter {
+  if (githubToken) {
+    return new RealGitHubAdapter({ githubToken });
+  }
   const liveGitHub = process.env.GITHUB_APP_ID && process.env.GITHUB_APP_PRIVATE_KEY;
   return liveGitHub ? new RealGitHubAdapter() : new FakeGitHubAdapter();
 }

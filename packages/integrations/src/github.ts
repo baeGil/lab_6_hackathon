@@ -9,6 +9,7 @@ export interface GitHubRuntimeCredentials {
   githubAppId?: string;
   githubAppPrivateKey?: string;
   githubApiUrl?: string;
+  githubToken?: string;
 }
 
 export interface GitHubTrackedRepositoryCandidate {
@@ -16,6 +17,14 @@ export interface GitHubTrackedRepositoryCandidate {
   repoName: string;
   installationId: number;
   ownerLogin: string;
+}
+
+interface RepositoryWebhookRecord {
+  id: number;
+  active: boolean;
+  config?: {
+    url?: string;
+  };
 }
 
 export interface GitHubAdapter {
@@ -124,6 +133,129 @@ export async function fetchTrackedRepositoriesForUser(
   return repositories.flat().sort((left, right) => left.repoName.localeCompare(right.repoName));
 }
 
+export async function fetchRepositoriesForPat(
+  token: string,
+  apiUrl = process.env.GITHUB_API_URL ?? "https://api.github.com"
+) {
+  const repositories: GitHubTrackedRepositoryCandidate[] = [];
+
+  for (let page = 1; page < 11; page += 1) {
+    const batch = await githubRequest<Array<{ id: number; full_name: string; owner?: { login?: string } }>>(
+      `/user/repos?per_page=100&page=${page}&affiliation=owner,collaborator,organization_member&sort=updated`,
+      { method: "GET" },
+      token,
+      apiUrl
+    );
+
+    repositories.push(
+      ...batch.map((repository) => ({
+        repoId: String(repository.id),
+        repoName: repository.full_name,
+        ownerLogin: repository.owner?.login ?? repository.full_name.split("/")[0] ?? "unknown",
+        installationId: 0
+      }))
+    );
+
+    if (batch.length < 100) {
+      break;
+    }
+  }
+
+  return repositories.sort((left, right) => left.repoName.localeCompare(right.repoName));
+}
+
+export async function ensureRepositoryWebhook(
+  token: string,
+  repoName: string,
+  callbackUrl: string,
+  secret?: string,
+  apiUrl = process.env.GITHUB_API_URL ?? "https://api.github.com"
+) {
+  const [owner, repo] = repoName.split("/");
+  if (!owner || !repo) {
+    throw new Error(`Invalid repoName '${repoName}', expected owner/repo.`);
+  }
+
+  const hooks = await githubRequest<RepositoryWebhookRecord[]>(
+    `/repos/${owner}/${repo}/hooks?per_page=100`,
+    { method: "GET" },
+    token,
+    apiUrl
+  );
+
+  const existing = hooks.find((hook) => hook.config?.url === callbackUrl);
+  const payload = {
+    active: true,
+    events: ["pull_request"],
+    config: {
+      url: callbackUrl,
+      content_type: "json",
+      ...(secret ? { secret } : {})
+    }
+  };
+
+  if (existing) {
+    await githubRequest(
+      `/repos/${owner}/${repo}/hooks/${existing.id}`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      },
+      token,
+      apiUrl
+    );
+    return existing.id;
+  }
+
+  const created = await githubRequest<{ id: number }>(
+    `/repos/${owner}/${repo}/hooks`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "web",
+        ...payload
+      })
+    },
+    token,
+    apiUrl
+  );
+
+  return created.id;
+}
+
+export async function disableRepositoryWebhook(
+  token: string,
+  repoName: string,
+  callbackUrl: string,
+  apiUrl = process.env.GITHUB_API_URL ?? "https://api.github.com"
+) {
+  const [owner, repo] = repoName.split("/");
+  if (!owner || !repo) {
+    throw new Error(`Invalid repoName '${repoName}', expected owner/repo.`);
+  }
+
+  const hooks = await githubRequest<RepositoryWebhookRecord[]>(
+    `/repos/${owner}/${repo}/hooks?per_page=100`,
+    { method: "GET" },
+    token,
+    apiUrl
+  );
+
+  const existing = hooks.find((hook) => hook.config?.url === callbackUrl);
+  if (!existing) {
+    return;
+  }
+
+  await githubRequest(
+    `/repos/${owner}/${repo}/hooks/${existing.id}`,
+    { method: "DELETE" },
+    token,
+    apiUrl
+  );
+}
+
 async function getInstallationTokenWithCredentials(
   installationId: number,
   credentials: GitHubRuntimeCredentials
@@ -131,6 +263,9 @@ async function getInstallationTokenWithCredentials(
   const appId = credentials.githubAppId ?? process.env.GITHUB_APP_ID;
   const privateKey = credentials.githubAppPrivateKey ?? process.env.GITHUB_APP_PRIVATE_KEY?.replace(/\\n/g, "\n");
   const apiUrl = credentials.githubApiUrl ?? process.env.GITHUB_API_URL ?? "https://api.github.com";
+  if (credentials.githubToken) {
+    return credentials.githubToken;
+  }
   if (!appId || !privateKey) {
     throw new Error("Missing GITHUB_APP_ID or GITHUB_APP_PRIVATE_KEY for live GitHub integration.");
   }
@@ -226,17 +361,7 @@ export class RealGitHubAdapter implements GitHubAdapter {
   constructor(private readonly credentials: GitHubRuntimeCredentials = {}) {}
 
   async upsertCanonicalComment(result: AnalysisResult): Promise<DeliveryRecord> {
-    const installationId = result.snapshot.installationId;
-    if (!installationId) {
-      return {
-        channel: "github",
-        status: "failed",
-        target: result.snapshot.url,
-        timestamp: new Date().toISOString(),
-        message: "Missing installationId for GitHub live comment delivery."
-      };
-    }
-    const token = await getInstallationTokenWithCredentials(installationId, this.credentials);
+    const token = await getInstallationTokenWithCredentials(result.snapshot.installationId ?? 0, this.credentials);
     const { owner, repo } = parseRepo(result.snapshot);
     const comments = await githubRequest<Array<{ id: number; body: string }>>(
       `/repos/${owner}/${repo}/issues/${result.snapshot.prNumber}/comments?per_page=100`,
@@ -281,18 +406,17 @@ export class RealGitHubAdapter implements GitHubAdapter {
   }
 
   async upsertCheckRun(result: AnalysisResult): Promise<DeliveryRecord> {
-    const installationId = result.snapshot.installationId;
     const headSha = result.snapshot.headSha;
-    if (!installationId || !headSha) {
+    if (!headSha) {
       return {
         channel: "github",
         status: "failed",
         target: `${result.snapshot.url}/checks`,
         timestamp: new Date().toISOString(),
-        message: "Missing installationId or headSha for GitHub live check run."
+        message: "Missing headSha for GitHub live check run."
       };
     }
-    const token = await getInstallationTokenWithCredentials(installationId, this.credentials);
+    const token = await getInstallationTokenWithCredentials(result.snapshot.installationId ?? 0, this.credentials);
     const { owner, repo } = parseRepo(result.snapshot);
     const name = "PR Intelligence Agent";
     const summary = [
@@ -379,10 +503,14 @@ export async function buildWebhookEventFromGitHubPayload(
   credentials: GitHubRuntimeCredentials = {}
 ): Promise<WebhookEvent> {
   const installationId = body.installation?.id;
-  if (!installationId) {
-    throw new Error("GitHub webhook payload is missing installation.id.");
+  const token = credentials.githubToken
+    ? credentials.githubToken
+    : installationId
+      ? await getInstallationTokenWithCredentials(installationId, credentials)
+      : undefined;
+  if (!token) {
+    throw new Error("GitHub webhook payload could not be resolved to a repository access token.");
   }
-  const token = await getInstallationTokenWithCredentials(installationId, credentials);
   const apiUrl = credentials.githubApiUrl ?? process.env.GITHUB_API_URL ?? "https://api.github.com";
   const owner = body.repository?.owner?.login ?? body.repository?.owner?.name;
   const repo = body.repository?.name;

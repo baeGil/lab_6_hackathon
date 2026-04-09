@@ -223,12 +223,13 @@ export interface RepoIntegration {
 export interface TrackedRepository {
   repoId: string;
   repoName: string;
-  installationId: number;
+  installationId?: number;
   ownerLogin: string;
   ownerUserId: string;
   enabled: boolean;
   slackConfigured: boolean;
   discordConfigured: boolean;
+  webhookConfigured: boolean;
 }
 
 export interface DeliveryTargets {
@@ -242,6 +243,7 @@ export interface IntegrationCredentialsStatus {
   githubOAuthConfigured: boolean;
   githubWebhookSecretConfigured: boolean;
   groqConfigured: boolean;
+  githubUserTokenConfigured: boolean;
   githubApiUrl: string;
   groqModelId: string;
   aiProviderMode: "heuristic" | "groq";

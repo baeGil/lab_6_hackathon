@@ -26,8 +26,7 @@ export function LiveDemoConsole() {
   const [form, setForm] = useState({
     owner: "",
     repo: "",
-    pullNumber: "",
-    installationId: ""
+    pullNumber: ""
   });
   const [result, setResult] = useState<DemoResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -42,8 +41,7 @@ export function LiveDemoConsole() {
       body: JSON.stringify({
         owner: form.owner,
         repo: form.repo,
-        pullNumber: Number(form.pullNumber),
-        installationId: Number(form.installationId)
+        pullNumber: Number(form.pullNumber)
       })
     });
     setResult((await response.json()) as DemoResponse);
@@ -56,8 +54,9 @@ export function LiveDemoConsole() {
         <div style={eyebrowStyle}>Live Pull Request Demo</div>
         <h2 style={{ margin: "10px 0", fontSize: 34 }}>Run the full agent workflow on a real PR</h2>
         <p style={{ margin: 0, maxWidth: 760, lineHeight: 1.6 }}>
-          Enter a repository and pull request from a GitHub App installation you control. The system will fetch the
-          real diff, analyze it with the configured provider, then publish to GitHub, Slack, and Discord if available.
+          Enter a repository and pull request you can access with your GitHub login. The system will fetch the real
+          diff with your GitHub account token, analyze it with the configured provider, then publish to GitHub, Slack,
+          and Discord if the repository is already onboarded.
         </p>
       </section>
 
@@ -67,7 +66,6 @@ export function LiveDemoConsole() {
           <Field label="GitHub Owner" value={form.owner} onChange={(value) => setForm({ ...form, owner: value })} />
           <Field label="Repository Name" value={form.repo} onChange={(value) => setForm({ ...form, repo: value })} />
           <Field label="Pull Request Number" value={form.pullNumber} onChange={(value) => setForm({ ...form, pullNumber: value })} />
-          <Field label="Installation ID" value={form.installationId} onChange={(value) => setForm({ ...form, installationId: value })} />
           <button type="submit" style={buttonStyle} disabled={loading}>
             {loading ? "Running..." : "Analyze Real PR"}
           </button>
@@ -76,7 +74,7 @@ export function LiveDemoConsole() {
         <section style={panelStyle}>
           <h3 style={{ marginTop: 0 }}>Result</h3>
           {!result ? (
-            <p style={{ margin: 0, color: "#5f5449" }}>No run yet. Configure credentials on the Integrations page first.</p>
+            <p style={{ margin: 0, color: "#5f5449" }}>No run yet. Sign in with GitHub and sync your repositories first.</p>
           ) : result.error ? (
             <p style={{ margin: 0, color: "#7b3525" }}>{result.error}</p>
           ) : result.analysis ? (

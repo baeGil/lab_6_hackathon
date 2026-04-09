@@ -26,6 +26,7 @@ describe("memory store", () => {
     store.replaceTrackedRepositoriesForUser("github:1", [
       { repoId: "repo-1", repoName: "alice/alpha", installationId: 11, ownerLogin: "alice" }
     ]);
+    store.setRepositoryTracking("github:1", "repo-1", true);
     store.saveRepoIntegration("github:1", "repo-1", {
       slackWebhookUrl: "https://hooks.slack.test/a",
       discordWebhookUrl: "https://discord.test/a"

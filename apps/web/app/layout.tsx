@@ -27,7 +27,7 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
             <div>
               <div style={styles.eyebrow}>Private Beta</div>
               <h1 style={styles.brand}>PR Intelligence</h1>
-              <p style={styles.copy}>GitHub App + LangGraphJS + realtime delivery for review triage.</p>
+              <p style={styles.copy}>GitHub App + LangGraphJS + per-repo Slack and Discord delivery for review triage.</p>
             </div>
             <div style={styles.sessionBox}>
               {session ? (

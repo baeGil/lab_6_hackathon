@@ -1,3 +1,4 @@
+import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { getStore } from "../../../../../../packages/db/src/store";
 import { buildWebhookEventFromGitHubPayload } from "../../../../../../packages/integrations/src/github";
@@ -8,45 +9,17 @@ import {
   createProvider,
   createSlackAdapter
 } from "../../../../../../packages/workflows/src/runtime";
+import { getSessionCookieName, verifySession } from "../../../../../../packages/shared/src/auth";
 
 interface DemoRequest {
   owner: string;
   repo: string;
   pullNumber: number;
-  installationId: number;
 }
 
-async function fetchPullRequestWebhookShape(input: DemoRequest) {
+async function fetchPullRequestWebhookShape(input: DemoRequest, token: string, installationId?: number) {
   const apiUrl = process.env.GITHUB_API_URL ?? "https://api.github.com";
-  const appId = process.env.GITHUB_APP_ID;
-  const privateKey = process.env.GITHUB_APP_PRIVATE_KEY?.replace(/\\n/g, "\n");
   const resolvedApiUrl = apiUrl;
-  if (!appId || !privateKey) {
-    throw new Error("Missing GitHub App credentials in environment.");
-  }
-
-  const header = Buffer.from(JSON.stringify({ alg: "RS256", typ: "JWT" }))
-    .toString("base64url");
-  const now = Math.floor(Date.now() / 1000);
-  const payload = Buffer.from(JSON.stringify({ iat: now - 60, exp: now + 540, iss: appId })).toString("base64url");
-  const sign = await import("node:crypto");
-  const signer = sign.createSign("RSA-SHA256");
-  signer.update(`${header}.${payload}`);
-  signer.end();
-  const jwt = `${header}.${payload}.${signer.sign(privateKey).toString("base64url")}`;
-
-  const tokenResponse = await fetch(`${resolvedApiUrl}/app/installations/${input.installationId}/access_tokens`, {
-    method: "POST",
-    headers: {
-      Accept: "application/vnd.github+json",
-      Authorization: `Bearer ${jwt}`,
-      "X-GitHub-Api-Version": "2022-11-28"
-    }
-  });
-  if (!tokenResponse.ok) {
-    throw new Error(`Failed to create installation token: ${tokenResponse.status}`);
-  }
-  const { token } = (await tokenResponse.json()) as { token: string };
 
   const prResponse = await fetch(`${resolvedApiUrl}/repos/${input.owner}/${input.repo}/pulls/${input.pullNumber}`, {
     headers: {
@@ -62,7 +35,7 @@ async function fetchPullRequestWebhookShape(input: DemoRequest) {
 
   return {
     action: "opened",
-    installation: { id: input.installationId },
+    ...(installationId ? { installation: { id: installationId } } : {}),
     repository: {
       id: pr.base.repo.id,
       name: input.repo,
@@ -78,14 +51,28 @@ async function fetchPullRequestWebhookShape(input: DemoRequest) {
 export async function POST(request: Request) {
   try {
     const store = getStore();
+    const cookieStore = await cookies();
+    const session = verifySession(cookieStore.get(getSessionCookieName())?.value);
+    if (!session) {
+      return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
+    }
+    const accessToken = store.getUserAccessToken(session.userId);
+    if (!accessToken) {
+      return NextResponse.json({ error: "Missing GitHub account token. Sign in with GitHub again." }, { status: 400 });
+    }
     const body = (await request.json()) as DemoRequest;
-    const fakeWebhookPayload = await fetchPullRequestWebhookShape(body);
-    const event = await buildWebhookEventFromGitHubPayload(fakeWebhookPayload, "opened", crypto.randomUUID());
+    const trackedRepository = store
+      .listTrackedRepositoriesForUser(session.userId)
+      .find((repository) => repository.repoName.toLowerCase() === `${body.owner}/${body.repo}`.toLowerCase());
+    const fakeWebhookPayload = await fetchPullRequestWebhookShape(body, accessToken, trackedRepository?.installationId);
+    const event = await buildWebhookEventFromGitHubPayload(fakeWebhookPayload, "opened", crypto.randomUUID(), {
+      githubToken: accessToken
+    });
     const deliveryTargets = store.getDeliveryTargetsForRepo(event.snapshot.repoId);
     const result = await handleWebhookEvent(event, {
       store,
       provider: createProvider(),
-      github: createGitHubAdapter(),
+      github: createGitHubAdapter(trackedRepository?.installationId ? undefined : accessToken),
       slack: createSlackAdapter(deliveryTargets.slackWebhookUrls),
       discord: createDiscordAdapter(deliveryTargets.discordWebhookUrls)
     });
